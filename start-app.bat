@@ -1,0 +1,6 @@
+@echo off
+cd /d "%~dp0"
+echo Starting Museum RAG Backend...
+start "Museum RAG Backend" cmd /k ".\start-backend.bat"
+echo Starting Museum RAG Frontend...
+start "Museum RAG Frontend" cmd /k ".\start-frontend.bat"

@@ -1,0 +1,17 @@
+export const ASSAM_RIFLES_UNITS = [
+  { id: '1-ar', name: '1st Unit, Assam Units', shortName: '1 AR', established: '1835', location: 'Lushai Hills' },
+  { id: '2-ar', name: '2nd Unit, Assam Units', shortName: '2 AR', established: '1883', location: 'Shillong' },
+  { id: '3-ar', name: '3rd Unit, Assam Units', shortName: '3 AR', established: '1891', location: 'Kohima' },
+  { id: '4-ar', name: '4th Unit, Assam Units', shortName: '4 AR', established: '1913', location: 'Imphal' },
+  { id: '5-ar', name: '5th Unit, Assam Units', shortName: '5 AR', established: '1920', location: 'Lokra' },
+  { id: '6-ar', name: '6th Unit, Assam Units', shortName: '6 AR', established: '1924', location: 'Agartala' },
+  { id: '7-ar', name: '7th Unit, Assam Units', shortName: '7 AR', established: '1930', location: 'Silchar' },
+  { id: '8-ar', name: '8th Unit, Assam Units', shortName: '8 AR', established: '1938', location: 'Aizawl' },
+  { id: '9-ar', name: '9th Unit, Assam Units', shortName: '9 AR', established: '1941', location: 'Itanagar' },
+  { id: '10-ar', name: '10th Unit, Assam Units', shortName: '10 AR', established: '1943', location: 'Mokokchung' },
+  { id: '12-ar', name: '12th Unit, Assam Units', shortName: '12 AR', established: '1948', location: 'Tura' },
+  { id: '14-ar', name: '14th Unit, Assam Units', shortName: '14 AR', established: '1955', location: 'Dimapur' },
+  { id: '15-ar', name: '15th Unit, Assam Units', shortName: '15 AR', established: '1960', location: 'Lunglei' },
+  { id: '16-ar', name: '16th Unit, Assam Units', shortName: '16 AR', established: '1963', location: 'Ghaspani' },
+  { id: '17-ar', name: '17th Unit, Assam Units', shortName: '17 AR', established: '1965', location: 'Shillong' },
+];

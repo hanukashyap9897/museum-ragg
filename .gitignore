@@ -1,0 +1,9 @@
+.venv
+.log
+venv/
+.venv/
+frontend/venv/
+frontend/.env
+__pycache__/
+*.pyc
+*.pyo
