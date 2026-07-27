@@ -14,7 +14,7 @@ class Settings:
     # Format: postgresql+psycopg2://<user>:<password>@<host>:<port>/<dbname>
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg2://postgres:slog2026@localhost:5432/museum_rag",
+        "postgresql+psycopg2://neondb_owner:npg_VXwv7I6ARFBk@ep-icy-flower-ayaekptz-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require",
     )
 
     # --- File storage ---
@@ -26,6 +26,10 @@ class Settings:
         ".mp4", ".webm", ".mov", ".avi", ".mkv"
     }
     MAX_FILE_SIZE_MB: int = 100
+
+    # --- Groq LLM API ---
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 settings = Settings()

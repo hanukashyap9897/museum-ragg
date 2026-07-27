@@ -4,7 +4,28 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config.settings import settings
 
 # The engine is the actual connection pool to Postgres
-engine = create_engine(settings.DATABASE_URL, echo=False, future=True)
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+from app.config.settings import settings
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,     # Checks whether a connection is still alive
+    pool_recycle=300,       # Recycles connections every 5 minutes
+    pool_size=5,
+    max_overflow=10,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+Base = declarative_base()
 
 # Each request gets its own Session from this factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
