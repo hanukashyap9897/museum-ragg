@@ -6,6 +6,7 @@ import { assamRiflesData } from '../../data/assam-rifles';
 import { arunachalScoutsData } from '../../data/arunachal-scouts';
 import { rashtriyaRiflesData } from '../../data/rashtriya-rifles';
 import { territorialArmyData } from '../../data/territorial-army';
+import { NODE_API_BASE_URL } from '../../config/api';
 
 const STORE_PREFIX = 'arc_museum_data_';
 const SUBUNIT_PREFIX = 'arc_museum_subunit_';
@@ -107,7 +108,7 @@ let isInitialized = false;
 export async function initDb(): Promise<void> {
   if (isInitialized) return;
   try {
-    const res = await fetch('/api/get-all-data');
+    const res = await fetch(`${NODE_API_BASE_URL}/api/get-all-data`);
     const json = await res.json();
     if (json.success && json.data) {
       dbCache = json.data;
@@ -153,7 +154,7 @@ export function saveUnitData(key: UnitKey, data: any): void {
   dbCache[cacheKey] = data;
 
   // Sync to database
-  fetch('/api/save-data', {
+  fetch(`${NODE_API_BASE_URL}/api/save-data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: cacheKey, data })
@@ -178,7 +179,7 @@ export function resetUnitData(key: UnitKey): void {
   const cacheKey = STORE_PREFIX + key;
   delete dbCache[cacheKey];
 
-  fetch('/api/reset-data', {
+  fetch(`${NODE_API_BASE_URL}/api/reset-data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: cacheKey })
@@ -214,7 +215,7 @@ export function saveSubUnitData(parentKey: UnitKey, subUnitId: string, data: any
   const cacheKey = `${SUBUNIT_PREFIX}${parentKey}_${subUnitId}`;
   dbCache[cacheKey] = data;
 
-  fetch('/api/save-data', {
+  fetch(`${NODE_API_BASE_URL}/api/save-data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: cacheKey, data })
@@ -238,7 +239,7 @@ export function resetSubUnitData(parentKey: UnitKey, subUnitId: string): void {
   const cacheKey = `${SUBUNIT_PREFIX}${parentKey}_${subUnitId}`;
   delete dbCache[cacheKey];
 
-  fetch('/api/reset-data', {
+  fetch(`${NODE_API_BASE_URL}/api/reset-data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: cacheKey })
@@ -260,7 +261,7 @@ export function getMergedSubUnitData(parentKey: UnitKey, subUnitId: string): any
 export function resetAllData(): void {
   dbCache = {};
 
-  fetch('/api/reset-data', {
+  fetch(`${NODE_API_BASE_URL}/api/reset-data`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ all: true })

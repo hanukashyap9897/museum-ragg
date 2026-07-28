@@ -1,7 +1,7 @@
 // src/admin/pages/UploadAndProcess.tsx
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+import { FASTAPI_BASE_URL as API_BASE } from '../../config/api';
 const POLL_INTERVAL_MS = 2_000;
 const SOFT_TIMEOUT_ATTEMPTS = 600;   // UI hint after ~20 min — user can keep waiting
 

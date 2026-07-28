@@ -11,7 +11,14 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
+
+// Serve static images and videos uploaded to Node server
+app.use('/images', express.static(path.join(__dirname, '../public/images')));
+app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
 
 // Configure body-parser with high limit for general JSON transactions
 app.use(express.json({ limit: '100mb' }));

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import RobotIcon from './RobotIcon';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+import { FASTAPI_BASE_URL as API_BASE } from '../../config/api';
 
 export type SearchResultItem = {
   id: string;

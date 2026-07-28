@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { showToast } from '../../components/toastStore';
 import ConfirmModal from '../../components/ConfirmModal';
+import { NODE_API_BASE_URL } from '../../../config/api';
 
 interface Officer { name: string; rank: string; tenure: string; bio: string; contribution: string; image: string; }
 
@@ -35,7 +36,7 @@ export default function OfficersEditor({ data, onSave }: Props) {
         const formData = new FormData();
         formData.append('image', file);
 
-        const res = await fetch('/api/upload-image', {
+        const res = await fetch(`${NODE_API_BASE_URL}/api/upload-image`, {
           method: 'POST',
           body: formData,
         });

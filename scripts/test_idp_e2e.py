@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-API = "http://127.0.0.1:8000"
+import os
+API = os.getenv("API_URL", "https://museum-ai-2-0-1-rag.onrender.com")
 TEST_FILE = ROOT / "test_page_standalone.png"
 MAX_POLLS = 600
 POLL_INTERVAL = 2

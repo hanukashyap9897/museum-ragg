@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { showToast } from '../../components/toastStore';
 import ConfirmModal from '../../components/ConfirmModal';
+import { NODE_API_BASE_URL } from '../../../config/api';
 
 interface VideoItem {
   title: string;
@@ -79,7 +80,7 @@ export default function VideosEditor({ data, onSave }: Props) {
         const formData = new FormData();
         formData.append('video', file);
 
-        const res = await fetch('/api/upload-video', {
+        const res = await fetch(`${NODE_API_BASE_URL}/api/upload-video`, {
           method: 'POST',
           body: formData,
         });
@@ -112,7 +113,7 @@ export default function VideosEditor({ data, onSave }: Props) {
         const formData = new FormData();
         formData.append('image', file);
 
-        const res = await fetch('/api/upload-image', {
+        const res = await fetch(`${NODE_API_BASE_URL}/api/upload-image`, {
           method: 'POST',
           body: formData,
         });

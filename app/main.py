@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 import threading
 
@@ -7,8 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.session import init_db
 from app.api import upload, ocr, icr, metadata, signatures, idp, search
-
-
 
 
 def _preload_idp_engine():
@@ -31,13 +30,23 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(title="Assam Regiment Digital Museum API", lifespan=lifespan)
 
-# CORS — allow the Vite frontend to reach the API
+# CORS — allow Vite frontend (local & deployed on Render) to reach the API
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()] if allowed_origins_env else [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "https://museum-ai-2-0-1-rag.onrender.com",
+    "https://museum-ai-2-0-1-node.onrender.com",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=origins,
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
