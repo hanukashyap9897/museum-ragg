@@ -171,6 +171,13 @@ export default function UploadAndProcess() {
     const isVid = isVideoFile(file);
 
     try {
+      /* 0 — wake up backend if asleep */
+      try {
+        await fetch(`${API_BASE}/`, { method: 'GET' });
+      } catch (pingErr) {
+        console.log('Backend wake-up ping:', pingErr);
+      }
+
       /* 1 — upload file with real-time progress */
       const form = new FormData();
       form.append('file', file);

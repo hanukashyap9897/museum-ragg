@@ -52,7 +52,13 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=600,
 )
+
+
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return {}
 
 
 # Home API & Render Health Check Endpoint
