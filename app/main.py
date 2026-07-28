@@ -39,8 +39,10 @@ origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin
     "http://127.0.0.1:3000",
     "http://localhost:5000",
     "http://127.0.0.1:5000",
+    "https://museum-ai-2-0-1.onrender.com",
     "https://museum-ai-2-0-1-rag.onrender.com",
     "https://museum-ai-2-0-1-node.onrender.com",
+    "*"
 ]
 
 app.add_middleware(
@@ -53,8 +55,8 @@ app.add_middleware(
 )
 
 
-# Home API
-@app.get("/")
+# Home API & Render Health Check Endpoint
+@app.api_route("/", methods=["GET", "HEAD"])
 def home():
     return {
         "message": "Welcome to Assam Regiment Digital Museum",
