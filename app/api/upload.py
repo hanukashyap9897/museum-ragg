@@ -53,19 +53,29 @@ async def upload_document(
 
     ext = _validate_extension(file.filename)
 
-    contents = await file.read()
-    size_mb = len(contents) / (1024 * 1024)
-    if size_mb > settings.MAX_FILE_SIZE_MB:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large ({size_mb:.1f} MB). Max is {settings.MAX_FILE_SIZE_MB} MB.",
-        )
-
     doc_id = uuid.uuid4()
     stored_filename = f"{doc_id}{ext}"
     stored_path = settings.UPLOAD_DIR / stored_filename
-    with open(stored_path, "wb") as f:
-        f.write(contents)
+
+    size_bytes = 0
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    try:
+        with open(stored_path, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size_bytes += len(chunk)
+                if size_bytes > max_bytes:
+                    stored_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"File too large. Max allowed size is {settings.MAX_FILE_SIZE_MB} MB.",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        stored_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
 
     final_title = title or file.filename
 

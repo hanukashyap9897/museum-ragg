@@ -47,14 +47,19 @@ def compute_embedding(text: str) -> list[float]:
     """
     Returns a 384-dim embedding vector for the given text.
     Returns a zero vector if text is empty (avoids a crash on documents
-    with literally nothing to embed yet, e.g. mid-upload before OCR runs).
+    with literally nothing to embed yet, e.g. mid-upload before OCR runs)
+    or if model loading fails/times out on low-RAM free instances.
     """
     if not text or not text.strip():
         return [0.0] * 384
 
-    model = _get_model()
-    vector = model.encode(text, normalize_embeddings=True)
-    return vector.tolist()
+    try:
+        model = _get_model()
+        vector = model.encode(text, normalize_embeddings=True)
+        return vector.tolist()
+    except Exception as exc:
+        print(f"[embedding_service] Embedding generation skipped/failed: {exc}")
+        return [0.0] * 384
 
 
 def compute_document_embedding(
