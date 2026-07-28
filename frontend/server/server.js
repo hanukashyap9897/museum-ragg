@@ -173,6 +173,6 @@ connectDB().then(() => {
   });
 
   app.listen(PORT, () => {
-    console.log(`🚀 Express backend server running on http://localhost:${PORT}`);
+    console.log(`🚀 Express backend server running on port ${PORT}`);
   });
 });

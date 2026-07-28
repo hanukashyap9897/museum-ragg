@@ -57,6 +57,7 @@ export default function UploadAndProcess() {
 
   const [processingMode, setProcessingMode] = useState<'icr' | 'combined' | 'idp'>('icr');
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'completed' | 'failed' | 'timeout'>('idle');
+  const [uploadPercent, setUploadPercent] = useState<number>(0);
   const [pages, setPages] = useState<PageResult[]>([]);
   const [fullResult, setFullResult] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'pages' | 'text' | 'json'>('pages');
@@ -164,21 +165,49 @@ export default function UploadAndProcess() {
     setFullResult(null);
     setProgress(null);
     setDocumentId(null);
+    setUploadPercent(0);
     setStatus('uploading');
 
     const isVid = isVideoFile(file);
 
     try {
-      /* 1 — upload file */
+      /* 1 — upload file with real-time progress */
       const form = new FormData();
       form.append('file', file);
       if (metaTitle.trim()) form.append('title', metaTitle.trim());
       if (metaTags.trim()) form.append('tags', metaTags.trim());
       if (metaDescription.trim()) form.append('description', metaDescription.trim());
 
-      const uploadRes = await fetch(`${API_BASE}/upload/document`, { method: 'POST', body: form });
-      if (!uploadRes.ok) throw new Error(`Upload failed (${uploadRes.status})`);
-      const { id: document_id } = await uploadRes.json();
+      const json = await new Promise<any>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_BASE}/upload/document`);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setUploadPercent(pct);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              reject(new Error('Invalid response from server'));
+            }
+          } else {
+            try {
+              const resJson = JSON.parse(xhr.responseText);
+              reject(new Error(resJson.detail || `Upload failed (${xhr.status})`));
+            } catch {
+              reject(new Error(`Upload failed (${xhr.status})`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network connection error during upload'));
+        xhr.send(form);
+      });
+
+      const document_id = json.id;
       setDocumentId(document_id);
 
       if (isVid) {
@@ -515,7 +544,7 @@ export default function UploadAndProcess() {
             style={{ opacity: (!file || isWorking) ? 0.5 : 1, cursor: (!file || isWorking) ? 'not-allowed' : 'pointer' }}
           >
             {isWorking
-              ? (isVideo ? '⏳ Uploading Video…' : '⏳ Processing…')
+              ? (status === 'uploading' ? `⏳ Uploading... (${uploadPercent}%)` : '⏳ Processing…')
               : (isVideo ? '🚀 Upload Video' : `🚀 Process with ${processingMode === 'icr' ? 'Handwritten ICR' : processingMode === 'combined' ? 'Combined Engine' : 'IDP Pipeline'}`)}
           </button>
           {(file || status !== 'idle') && (
@@ -527,6 +556,26 @@ export default function UploadAndProcess() {
       </div>
 
       {/* ── Status feedback ────────────────────────── */}
+      {status === 'uploading' && (
+        <div className="admin-card" style={{ marginBottom: '1.5rem', borderColor: 'rgba(212,160,23,0.35)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div className="idp-spinner" />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                <div style={{ color: '#d4a017', fontWeight: 600, fontSize: '0.88rem' }}>
+                  Transmitting file over network... ({uploadPercent}%)
+                </div>
+                <div style={{ color: '#c0ad90', fontSize: '0.8rem', fontWeight: 600 }}>
+                  {uploadPercent}%
+                </div>
+              </div>
+              <div style={{ width: '100%', height: 6, background: 'rgba(212,160,23,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${uploadPercent}%`, height: '100%', background: '#d4a017', transition: 'width 0.2s ease' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {(status === 'processing' || status === 'timeout') && (
         <div className="admin-card" style={{ marginBottom: '1.5rem', borderColor: status === 'timeout' ? 'rgba(212,160,23,0.35)' : undefined }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

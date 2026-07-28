@@ -51,6 +51,7 @@ async def upload_document(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
+    print(f"[Upload] Started receiving file: {file.filename}")
     ext = _validate_extension(file.filename)
 
     doc_id = uuid.uuid4()
@@ -77,6 +78,7 @@ async def upload_document(
         stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
 
+    print(f"[Upload] File saved cleanly: {stored_filename} ({size_bytes / (1024*1024):.2f} MB)")
     final_title = title or file.filename
 
     embedding = compute_document_embedding(
