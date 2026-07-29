@@ -149,6 +149,11 @@ export default function SearchBar() {
     return ['mp4', 'webm', 'mov', 'avi', 'mkv', 'ogv'].includes(clean);
   };
 
+  const isAudio = (fileType: string) => {
+    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
+    return ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma', 'opus'].includes(clean);
+  };
+
   return (
     <>
       <div ref={containerRef} className="relative">
@@ -352,6 +357,11 @@ export default function SearchBar() {
                                     🎬 VIDEO
                                   </span>
                                 )}
+                                {isAudio(item.file_type) && (
+                                  <span className="text-[9px] text-[#E1BC78] px-1.5 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider flex-shrink-0">
+                                    🎵 AUDIO
+                                  </span>
+                                )}
                                 {isPdf(item.file_type) && (
                                   <span className="text-[9px] text-gray-400 px-1.5 py-0.5 rounded bg-black/50 border border-gray-700 font-mono flex-shrink-0">
                                     PDF
@@ -483,6 +493,10 @@ export default function SearchBar() {
                     <span className="text-xs text-[#E1BC78] px-2 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider uppercase">
                       🎬 VIDEO ({selectedDoc.file_type})
                     </span>
+                  ) : isAudio(selectedDoc.file_type) ? (
+                    <span className="text-xs text-[#E1BC78] px-2 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider uppercase">
+                      🎵 AUDIO ({selectedDoc.file_type})
+                    </span>
                   ) : (
                     <span className="text-xs text-gray-400 px-2 py-0.5 rounded bg-black/40 border border-gray-700 uppercase">
                       {selectedDoc.file_type}
@@ -500,7 +514,7 @@ export default function SearchBar() {
               </div>
 
               {/* OCR Pending Notice Flag */}
-              {selectedDoc.ocr_status === 'pending' && (
+              {isPdf(selectedDoc.file_type) && selectedDoc.ocr_status === 'pending' && Boolean(selectedDoc.icr_excerpt) && (
                 <div className="mb-4 p-3 rounded-lg bg-amber-950/60 border border-amber-600/50 text-amber-300 text-xs">
                   <div className="font-semibold flex items-center gap-1.5 mb-1 text-amber-400">
                     <span>⚠️</span> OCR Status: Pending
@@ -552,6 +566,18 @@ export default function SearchBar() {
                     onLoadedData={() => console.log('[Video Viewer] Loaded:', getViewUrl(selectedDoc))}
                     onError={(e) => console.error('[Video Viewer] Failed to load:', getViewUrl(selectedDoc), e)}
                   />
+                ) : isAudio(selectedDoc.file_type) ? (
+                  <div className="w-full p-6 bg-[#0a0f0c] rounded border border-[#85683c]/40 flex flex-col items-center gap-4">
+                    <div className="text-4xl text-[#E1BC78] animate-pulse">🎵</div>
+                    <div className="text-xs text-[#E1BC78] font-cinzel font-semibold">Audio Recording Stream</div>
+                    <audio
+                      src={getViewUrl(selectedDoc)}
+                      controls
+                      className="w-full max-w-md rounded border border-[#85683c]/40 bg-black"
+                      onLoadedData={() => console.log('[Audio Viewer] Loaded:', getViewUrl(selectedDoc))}
+                      onError={(e) => console.error('[Audio Viewer] Failed to load:', getViewUrl(selectedDoc), e)}
+                    />
+                  </div>
                 ) : (
                   <div className="py-12 text-center text-gray-400">
                     <p className="mb-2">Preview not directly inlineable for .{selectedDoc.file_type} files.</p>

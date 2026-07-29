@@ -16,9 +16,10 @@ app.use(cors({
   credentials: true
 }));
 
-// Serve static images and videos uploaded to Node server
+// Serve static images, videos, and audio uploaded to Node server
 app.use('/images', express.static(path.join(__dirname, '../public/images')));
 app.use('/videos', express.static(path.join(__dirname, '../public/videos')));
+app.use('/audio', express.static(path.join(__dirname, '../public/audio')));
 
 // Configure body-parser with high limit for general JSON transactions
 app.use(express.json({ limit: '100mb' }));
@@ -30,6 +31,8 @@ const storage = multer.diskStorage({
     let folder = '../public/images';
     if (file.mimetype.startsWith('video/')) {
       folder = '../public/videos';
+    } else if (file.mimetype.startsWith('audio/')) {
+      folder = '../public/audio';
     }
     const uploadPath = path.join(__dirname, folder);
     // Ensure directory exists
@@ -131,6 +134,24 @@ connectDB().then(() => {
 
     } catch (err) {
       console.error("Local image upload handler error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3. Endpoint to handle audio uploads by writing directly to public/audio/
+  app.post('/api/upload-audio', upload.single('audio'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No audio file provided' });
+      }
+
+      console.log(`✅ Saved audio file locally: ${req.file.filename} (${req.file.size} bytes)`);
+      
+      const publicUrl = `/audio/${req.file.filename}`;
+      res.json({ success: true, url: publicUrl });
+
+    } catch (err) {
+      console.error("Local audio upload handler error:", err);
       res.status(500).json({ error: err.message });
     }
   });

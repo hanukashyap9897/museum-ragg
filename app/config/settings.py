@@ -20,10 +20,11 @@ class Settings:
     # --- File storage ---
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
 
-    # --- Allowed upload types (expand later for zip/bulk) ---
+    # --- Allowed upload types (documents, images, videos, audio) ---
     ALLOWED_EXTENSIONS: set = {
         ".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif",
-        ".mp4", ".webm", ".mov", ".avi", ".mkv"
+        ".mp4", ".webm", ".mov", ".avi", ".mkv",
+        ".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".wma", ".opus"
     }
     MAX_FILE_SIZE_MB: int = 100
 
