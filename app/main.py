@@ -2,12 +2,11 @@ import os
 from contextlib import asynccontextmanager
 import threading
 
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.session import init_db
-from app.api import upload, ocr, icr, metadata, signatures, idp, search
+from app.api import upload, ocr, icr, metadata, signatures, idp, search, cms
 
 
 def _preload_idp_engine():
@@ -91,3 +90,14 @@ app.include_router(idp.router)
 # Wire in the Search endpoints: GET /search
 app.include_router(search.router)
 
+# Wire in the CMS endpoints: GET /api/get-all-data, POST /api/save-data,
+# POST /api/reset-data, POST /api/upload-image, POST /api/upload-video, POST /api/upload-audio
+app.include_router(cms.router)
+
+# Serve uploaded media files (replaces Node's express.static for /images, /videos, /audio)
+from fastapi.staticfiles import StaticFiles
+from app.api.cms import IMAGES_DIR, VIDEOS_DIR, AUDIO_DIR
+
+app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
+app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")

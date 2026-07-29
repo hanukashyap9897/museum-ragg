@@ -1,3 +1,6 @@
 @echo off
 cd /d "%~dp0frontend"
+echo Starting Node Express Media Server on http://localhost:5000...
+start "Node Express Server" cmd /k "npm run server"
+echo Starting Vite Frontend on http://localhost:5173...
 npm run dev

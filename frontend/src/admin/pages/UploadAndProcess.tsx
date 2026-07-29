@@ -1,7 +1,7 @@
 // src/admin/pages/UploadAndProcess.tsx
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-import { FASTAPI_BASE_URL as API_BASE } from '../../config/api';
+import { FASTAPI_BASE_URL as API_BASE, NODE_API_BASE_URL } from '../../config/api';
 const POLL_INTERVAL_MS = 2_000;
 const SOFT_TIMEOUT_ATTEMPTS = 600;   // UI hint after ~20 min — user can keep waiting
 
@@ -47,6 +47,12 @@ const isVideoFile = (f: File | null) => {
   return ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext) || f.type.startsWith('video/');
 };
 
+const isAudioFile = (f: File | null) => {
+  if (!f) return false;
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  return ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma', 'opus'].includes(ext) || f.type.startsWith('audio/');
+};
+
 export default function UploadAndProcess() {
   /* ── state ────────────────────────────────────────── */
   const [file, setFile] = useState<File | null>(null);
@@ -70,6 +76,8 @@ export default function UploadAndProcess() {
   const [dragActive, setDragActive] = useState(false);
 
   const isVideo = isVideoFile(file);
+  const isAudio = isAudioFile(file);
+  const isMediaOnly = isVideo || isAudio;
 
   /* ── cleanup on unmount ───────────────────────────── */
   useEffect(() => {
@@ -169,65 +177,102 @@ export default function UploadAndProcess() {
     setStatus('uploading');
 
     const isVid = isVideoFile(file);
+    const isAud = isAudioFile(file);
 
     try {
-      /* 0 — wake up backend if asleep */
+      /* 0 — wake up backend in background (non-blocking) */
+      fetch(`${API_BASE}/`).catch(() => {});
+
+    if (isVid || isAud) {
+      /* 1. Upload video/audio file to Node.js backend (handles large media files up to 200MB) */
+      const mediaForm = new FormData();
+      const fieldName = isAud ? 'audio' : 'video';
+      const nodeEndpoint = isAud ? `${NODE_API_BASE_URL}/api/upload-audio` : `${NODE_API_BASE_URL}/api/upload-video`;
+      mediaForm.append(fieldName, file);
       try {
-        await fetch(`${API_BASE}/`, { method: 'GET' });
-      } catch (pingErr) {
-        console.log('Backend wake-up ping:', pingErr);
+        await new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', nodeEndpoint);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setUploadPercent(Math.round((e.loaded / e.total) * 100));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(true);
+            } else {
+              reject(new Error(`${isAud ? 'Audio' : 'Video'} upload to Node backend failed (${xhr.status})`));
+            }
+          };
+          xhr.onerror = () => reject(new Error(`Network error uploading ${isAud ? 'audio' : 'video'} file to Node server`));
+          xhr.send(mediaForm);
+        });
+      } catch (err: any) {
+        console.warn('Node media upload warning:', err);
       }
 
-      /* 1 — upload file with real-time progress */
-      const form = new FormData();
-      form.append('file', file);
-      if (metaTitle.trim()) form.append('title', metaTitle.trim());
-      if (metaTags.trim()) form.append('tags', metaTags.trim());
-      if (metaDescription.trim()) form.append('description', metaDescription.trim());
+      /* 2. Index metadata & full file in FastAPI RAG for search & playback */
+      const metaForm = new FormData();
+      metaForm.append('file', file);
+      if (metaTitle.trim()) metaForm.append('title', metaTitle.trim());
+      if (metaTags.trim()) metaForm.append('tags', metaTags.trim());
+      if (metaDescription.trim()) metaForm.append('description', metaDescription.trim());
 
-      const json = await new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_BASE}/upload/document`);
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            setUploadPercent(pct);
-          }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              resolve(JSON.parse(xhr.responseText));
-            } catch {
-              reject(new Error('Invalid response from server'));
-            }
-          } else {
-            try {
-              const resJson = JSON.parse(xhr.responseText);
-              reject(new Error(resJson.detail || `Upload failed (${xhr.status})`));
-            } catch {
-              reject(new Error(`Upload failed (${xhr.status})`));
-            }
-          }
-        };
-        xhr.onerror = () => reject(new Error('Network connection error during upload'));
-        xhr.send(form);
-      });
-
-      const document_id = json.id;
+      const uploadRes = await fetch(`${API_BASE}/upload/document`, { method: 'POST', body: metaForm });
+      if (!uploadRes.ok) throw new Error(`Metadata upload failed (${uploadRes.status})`);
+      const { id: document_id } = await uploadRes.json();
       setDocumentId(document_id);
 
-      if (isVid) {
-        setStatus('completed');
-        setFullResult({
-          id: document_id,
-          status: 'completed',
-          result: {
-            clean_text: metaDescription || `${metaTitle || file.name} (Video Content Indexed)`
+      setStatus('completed');
+      setFullResult({
+        id: document_id,
+        status: 'completed',
+        result: {
+          clean_text: metaDescription || `${metaTitle || file.name} (${isAud ? 'Audio' : 'Video'} Content Indexed)`
+        }
+      });
+      return;
+    }
+
+    /* 1 — upload document file to FastAPI with real-time progress */
+    const form = new FormData();
+    form.append('file', file);
+    if (metaTitle.trim()) form.append('title', metaTitle.trim());
+    if (metaTags.trim()) form.append('tags', metaTags.trim());
+    if (metaDescription.trim()) form.append('description', metaDescription.trim());
+
+    const json = await new Promise<any>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}/upload/document`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setUploadPercent(pct);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error('Invalid response from server'));
           }
-        });
-        return;
-      }
+        } else {
+          try {
+            const resJson = JSON.parse(xhr.responseText);
+            reject(new Error(resJson.detail || `Upload failed (${xhr.status})`));
+          } catch {
+            reject(new Error(`Upload failed (${xhr.status})`));
+          }
+        }
+      };
+      xhr.onerror = () => reject(new Error('Network connection error during upload'));
+      xhr.send(form);
+    });
+
+    const document_id = json.id;
+    setDocumentId(document_id);
 
       /* 2 — start selected pipeline mode for documents */
       const startUrl = processingMode === 'icr'
@@ -332,13 +377,13 @@ export default function UploadAndProcess() {
               width: 44, height: 44, borderRadius: 12,
               background: 'linear-gradient(135deg, #d4a017, #8c5500)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem',
-            }}>{isVideo ? '🎬' : '📄'}</div>
+            }}>{isAudio ? '🎵' : isVideo ? '🎬' : '📄'}</div>
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#e4dcc8' }}>
-                Document / Image / Video Upload
+                Document / Image / Video / Audio Upload
               </div>
               <div style={{ fontSize: '0.7rem', color: '#7a6e58' }}>
-                Supported formats: PDF, PNG, JPG, JPEG, TIFF, MP4, WEBM, MOV, AVI, MKV
+                Supported formats: PDF, PNG, JPG, MP4, MOV, MP3, WAV, AAC, FLAC, M4A, OGG
               </div>
             </div>
           </div>
@@ -346,8 +391,8 @@ export default function UploadAndProcess() {
 
         <div className="admin-divider" />
 
-        {/* Processing Mode Selection Cards vs Video Notice */}
-        {isVideo ? (
+        {/* Processing Mode Selection Cards vs Media Notice */}
+        {isMediaOnly ? (
           <div style={{
             padding: '0.9rem 1.1rem',
             borderRadius: 10,
@@ -360,13 +405,13 @@ export default function UploadAndProcess() {
             alignItems: 'center',
             gap: '0.75rem'
           }}>
-            <span style={{ fontSize: '1.4rem' }}>🎬</span>
+            <span style={{ fontSize: '1.4rem' }}>{isAudio ? '🎵' : '🎬'}</span>
             <div>
               <div style={{ fontWeight: 600, color: '#d4a017', fontSize: '0.85rem', marginBottom: '0.15rem' }}>
-                Video File Selected
+                {isAudio ? 'Audio File Selected' : 'Video File Selected'}
               </div>
               <div style={{ fontSize: '0.75rem', color: '#c0ad90', lineHeight: 1.4 }}>
-                Videos are indexed by title, tags, and description only — OCR/ICR model pipeline is skipped.
+                {isAudio ? 'Audio recordings' : 'Videos'} are indexed by title, tags, and description for RAG search — OCR/ICR text pipeline is skipped.
               </div>
             </div>
           </div>
@@ -526,15 +571,15 @@ export default function UploadAndProcess() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.mp4,.webm,.mov,.avi,.mkv"
+            accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.mp4,.webm,.mov,.avi,.mkv,.mp3,.wav,.aac,.flac,.ogg,.m4a,.wma,.opus"
             style={{ display: 'none' }}
             onChange={e => { if (e.target.files?.[0]) setFile(e.target.files[0]); }}
           />
           <div style={{ fontSize: '2.25rem', marginBottom: '0.5rem' }}>
-            {file ? (isVideo ? '🎬' : '📎') : '📤'}
+            {file ? (isAudio ? '🎵' : isVideo ? '🎬' : '📎') : '📤'}
           </div>
           <div style={{ color: '#c0ad90', fontSize: '0.85rem', fontWeight: 500 }}>
-            {file ? file.name : 'Click or drag a PDF, Image, or Video file (PNG, JPG, MP4, MOV, etc.) here'}
+            {file ? file.name : 'Click or drag a PDF, Image, Video, or Audio file (PNG, JPG, MP4, MP3, WAV, etc.) here'}
           </div>
           {file && (
             <div style={{ fontSize: '0.7rem', color: '#7a6e58', marginTop: '0.25rem' }}>
@@ -552,7 +597,7 @@ export default function UploadAndProcess() {
           >
             {isWorking
               ? (status === 'uploading' ? `⏳ Uploading... (${uploadPercent}%)` : '⏳ Processing…')
-              : (isVideo ? '🚀 Upload Video' : `🚀 Process with ${processingMode === 'icr' ? 'Handwritten ICR' : processingMode === 'combined' ? 'Combined Engine' : 'IDP Pipeline'}`)}
+              : (isAudio ? '🚀 Upload Audio Recording' : isVideo ? '🚀 Upload Video' : `🚀 Process with ${processingMode === 'icr' ? 'Handwritten ICR' : processingMode === 'combined' ? 'Combined Engine' : 'IDP Pipeline'}`)}
           </button>
           {(file || status !== 'idle') && (
             <button className="admin-btn admin-btn-ghost" onClick={handleReset}>

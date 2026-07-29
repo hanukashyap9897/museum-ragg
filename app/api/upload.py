@@ -33,11 +33,11 @@ async def upload_document(
     db: Session = Depends(get_db),
 ):
     """
-    Uploads a single document (PDF, image, or video), saves it to disk,
+    Uploads a single file (PDF, image, video, or audio), saves it to disk,
     and creates a Document row in Postgres with status = pending.
 
     title/tags/description are optional user-supplied metadata — these
-    matter most for content OCR/ICR can't read (photos, videos), but are
+    matter most for content OCR/ICR can't read (photos, videos, audio), but are
     accepted for every upload since they also improve search on documents
     that DO get OCR/ICR text extracted.
 
@@ -81,6 +81,7 @@ async def upload_document(
     print(f"[Upload] File saved cleanly: {stored_filename} ({size_bytes / (1024*1024):.2f} MB)")
     final_title = title or file.filename
 
+    # Compute initial embedding from available metadata (title, tags, description)
     embedding = compute_document_embedding(
         title=final_title,
         tags=tags,
