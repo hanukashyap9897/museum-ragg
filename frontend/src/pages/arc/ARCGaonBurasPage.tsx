@@ -6,12 +6,12 @@ import { getUnitData } from '../../admin/store/adminStore';
 export default function ARCGaonBurasPage() {
   const breadcrumbs = [
     { label: 'Assam Regimental Centre', path: '/arc' },
-    { label: 'Gaon Buras & Officers' },
+    { label: 'Gaon Buras' },
   ];
 
   return (
     <SubPageLayout
-      title="Gaon Buras & Commanding Officers"
+      title="Gaon Buras"
       subtitle="Exhibition Room III"
       metaTitle="Gaon Buras & Officers | Assam Regimental Centre"
       metaDesc="Meet the commanding officers and traditional community elders (Gaon Buras) who built and sustained the legacy of the Assam Regimental Centre."

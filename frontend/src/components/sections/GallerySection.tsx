@@ -18,11 +18,8 @@ export default function GallerySection({ gallery }: Props) {
   return (
     <section id="gallery" className="relative museum-room-wall spotlight-glow" style={{ paddingTop: '60px', paddingBottom: '80px' }}>
       <div className="museum-container">
-        <SectionHeader
-          tag="Visual Archive"
-          title="Photography Gallery"
-          subtitle="Walk through the visual collection of historic moments, field trainings, and official parades. Click any portrait or action record to open its catalog entry."
-        />
+
+
 
         {/* Category filters */}
         <div className="flex flex-wrap gap-4 justify-center" style={{ marginBottom: '40px' }}>
@@ -52,14 +49,14 @@ export default function GallerySection({ gallery }: Props) {
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" style={{ gap: '80px' }}
           >
             {filtered.map((item, i) => {
-              const isFeatured = i === 0; // Large centerpiece image
+              const isFeatured = i === 0;
               return (
                 <motion.div
                   key={item.id}
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05, duration: 0.6 }}
-                  className={`relative cursor-pointer group museum-wood-frame brass-corners rounded-xl overflow-hidden shadow-2xl ${
+                  className={`relative cursor-pointer group museum-wood-frame brass-corners rounded-xl overflow-hidden shadow-2xl flex flex-col ${
                     isFeatured ? 'lg:col-span-2 lg:row-span-1' : ''
                   }`}
                   onClick={() => setSelectedItem(item)}
@@ -68,44 +65,42 @@ export default function GallerySection({ gallery }: Props) {
                   onKeyDown={(e) => e.key === 'Enter' && setSelectedItem(item)}
                   aria-label={`View photo: ${item.caption}`}
                 >
-                  <div className="relative w-full overflow-hidden img-zoom-container" style={{ height: isFeatured ? '480px' : '360px' }}>
+                  {/* ── Image ── */}
+                  <div className="relative w-full overflow-hidden img-zoom-container flex-shrink-0" style={{ height: isFeatured ? '480px' : '320px' }}>
                     <img
                       src={item.src}
                       alt={item.caption}
                       className="w-full h-full object-cover filter brightness-[0.85] contrast-[1.03]"
                       loading="lazy"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent" />
-
-                    {/* Exhibit Details Overlay */}
-                    <div className="absolute inset-0 flex flex-col justify-end p-6 opacity-85 group-hover:opacity-100 transition-opacity duration-300">
-                      <div className="translate-y-1.5 group-hover:translate-y-0 transition-transform duration-400">
-                        
-                        {/* Brass tag look */}
-                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#1a2412] text-yellow-400 text-[9px] tracking-widest uppercase font-inter rounded border border-yellow-500/20 mb-3">
-                          <span>{item.category}</span>
-                          <span className="w-1 h-1 rounded-full bg-yellow-500/50" />
-                          <span>{item.year}</span>
-                        </div>
-
-                        <p className="font-cinzel text-stone-100 text-base md:text-lg mb-2 leading-snug group-hover:text-yellow-400 transition-colors duration-300">
-                          {item.caption}
-                        </p>
-                        
-                        <div className="flex items-center gap-2 text-stone-400 text-xs font-inter mt-3">
-                          <span className="text-[10px] uppercase tracking-widest text-yellow-500/80">Click to examine document</span>
-                          <svg className="w-3.5 h-3.5 text-yellow-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                          </svg>
-                        </div>
-                      </div>
-                    </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
 
                     {/* Corner Tag */}
                     <div className="absolute top-4 left-4">
                       <span className="font-inter text-[9px] tracking-widest uppercase px-3 py-1 rounded bg-[#0a0c08]/90 text-yellow-500 border border-yellow-500/30">
                         Exhibit 0{item.id}
                       </span>
+                    </div>
+                  </div>
+
+                  {/* ── Text Panel (outside image, never cropped) ── */}
+                  <div className="bg-[#0d0f0a] px-5 py-4 flex flex-col gap-2 flex-shrink-0">
+                    {/* Category + Year badge */}
+                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#1a2412] text-yellow-400 text-[9px] tracking-widest uppercase font-inter rounded border border-yellow-500/20 w-fit">
+                      <span>{item.category}</span>
+                      <span className="w-1 h-1 rounded-full bg-yellow-500/50" />
+                      <span>{item.year}</span>
+                    </div>
+
+                    <p className="font-cinzel text-stone-100 text-sm md:text-base leading-snug group-hover:text-yellow-400 transition-colors duration-300">
+                      {item.caption}
+                    </p>
+
+                    <div className="flex items-center gap-2 text-stone-400 text-xs font-inter">
+                      <span className="text-[10px] uppercase tracking-widest text-yellow-500/70">Click to examine document</span>
+                      <svg className="w-3.5 h-3.5 text-yellow-500 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
                     </div>
                   </div>
                 </motion.div>
