@@ -151,6 +151,11 @@ export default function SearchBar() {
   const charCount = input.length;
   const maxChars = 3000;
 
+  const isAudio = (fileType: string) => {
+    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
+    return ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma', 'opus'].includes(clean);
+  };
+
   return (
     <>
       {/* Floating Trigger Button */}
@@ -498,13 +503,13 @@ export default function SearchBar() {
                                   fontSize: '14px', lineHeight: 1.65, whiteSpace: 'pre-wrap',
                                   ...(m.role === 'user'
                                     ? {
-                                        background: '#d4a94a', color: '#171207',
-                                        fontWeight: 500, borderBottomRightRadius: '4px',
-                                      }
+                                      background: '#d4a94a', color: '#171207',
+                                      fontWeight: 500, borderBottomRightRadius: '4px',
+                                    }
                                     : {
-                                        background: '#16160f', border: '1px solid #2a2a1e',
-                                        color: '#ece7d8', borderBottomLeftRadius: '4px',
-                                      }),
+                                      background: '#16160f', border: '1px solid #2a2a1e',
+                                      color: '#ece7d8', borderBottomLeftRadius: '4px',
+                                    }),
                                 }}
                               >
                                 {m.content}
@@ -639,8 +644,8 @@ export default function SearchBar() {
                           transition: 'border-color 0.15s ease',
                           boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
                         }}
-                        onFocus={() => {}}
-                        onBlur={() => {}}
+                        onFocus={() => { }}
+                        onBlur={() => { }}
                         ref={node => {
                           if (node) {
                             node.onfocus = () => { node.style.borderColor = '#d4a94a'; };
