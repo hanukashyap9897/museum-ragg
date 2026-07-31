@@ -14,7 +14,7 @@ engine = create_engine(
     echo=False,
     future=True,
     pool_pre_ping=True,     # Checks whether a connection is still alive
-    pool_recycle=300,       # Recycles connections every 5 minutes
+    pool_recycle=280,       # Recycles connections every ~4.7 min (under Neon's 300 s idle timeout)
     pool_size=5,
     max_overflow=10,
 )

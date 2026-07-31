@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.session import init_db
-from app.api import upload, ocr, icr, metadata, signatures, idp, search, cms
+from app.api import upload, ocr, icr, metadata, signatures, idp, search, cms, chat
 
 
 def _preload_idp_engine():
@@ -89,6 +89,9 @@ app.include_router(idp.router)
 
 # Wire in the Search endpoints: GET /search
 app.include_router(search.router)
+
+# Wire in the Chat / RAG endpoints: POST /chat/ask
+app.include_router(chat.router)
 
 # Wire in the CMS endpoints: GET /api/get-all-data, POST /api/save-data,
 # POST /api/reset-data, POST /api/upload-image, POST /api/upload-video, POST /api/upload-audio

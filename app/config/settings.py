@@ -1,8 +1,13 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Base directory of the project (museum-rag/)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Load environment variables from root .env and app/.env
+load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / "app" / ".env")
 
 
 class Settings:

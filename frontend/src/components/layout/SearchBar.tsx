@@ -1,655 +1,812 @@
 // src/components/layout/SearchBar.tsx
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import RobotIcon from './RobotIcon';
+import { FASTAPI_BASE_URL } from '../../config/api';
 
-import { FASTAPI_BASE_URL as API_BASE } from '../../config/api';
-
-export type SearchResultItem = {
+interface Source {
   id: string;
   title: string;
-  category?: string;
-  collection?: string;
-  file_type: string;
-  tags?: string;
-  description?: string;
   similarity: number;
-  ocr_excerpt?: string;
-  icr_excerpt?: string;
-  ocr_status?: string;
-  icr_status?: string;
   view_url: string;
-  download_url?: string;
-};
-
-function HighlightedText({ text, query }: { text?: string | null; query: string }) {
-  if (!text) return null;
-  if (!query.trim()) return <>{text}</>;
-
-  const keywords = query
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-
-  if (keywords.length === 0) return <>{text}</>;
-
-  const regex = new RegExp(`(${keywords.join('|')})`, 'gi');
-  const parts = text.split(regex);
-
-  return (
-    <>
-      {parts.map((part, i) => {
-        const isMatch = keywords.some(
-          (k) => part.toLowerCase() === k.toLowerCase()
-        );
-        return isMatch ? (
-          <mark
-            key={i}
-            className="bg-[#C88B47]/60 text-[#FFE5B4] px-0.5 rounded font-semibold no-underline"
-          >
-            {part}
-          </mark>
-        ) : (
-          <span key={i}>{part}</span>
-        );
-      })}
-    </>
-  );
+  file_type?: string; // e.g. "mp4", "mp3", "pdf", "png" …
 }
 
-const SAMPLE_SUGGESTIONS = ['1962 War', 'Gallantry Awards', 'Battalion History', 'Raising Day', 'WWII'];
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  sources?: Source[];
+}
+
+interface ConversationThread {
+  id: string;
+  title: string;
+  preview: string;
+  messages: Message[];
+}
+
+const SUGGESTIONS = [
+  { icon: '📜', label: 'Battle of Kohima', prompt: 'Tell me about the Battle of Kohima' },
+  { icon: '🏅', label: 'Gallantry Awards', prompt: 'Gallantry Awards & Ashoka Chakra' },
+  { icon: '📁', label: 'Posting Orders', prompt: 'Find officer posting orders' },
+  { icon: '📖', label: '1962 War History', prompt: '1962 War & Battalion History' },
+];
+
+const NAV_ITEMS = [
+  {
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+      </svg>
+    ),
+    label: 'Chat',
+    id: 'chat',
+  },
+  {
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+    label: 'History',
+    id: 'history',
+  },
+];
 
 export default function SearchBar() {
   const [isOpen, setIsOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResultItem[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedDoc, setSelectedDoc] = useState<SearchResultItem | null>(null);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [activeNav, setActiveNav] = useState('chat');
+  const [threads, setThreads] = useState<ConversationThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Close chat window on click outside
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
-  // Auto focus input when chat window opens
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 150);
     }
   }, [isOpen]);
 
-  // Debounced search fetch
+  // Auto-resize textarea
   useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
+    const ta = inputRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+  }, [input]);
 
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query.trim())}`);
-        if (!res.ok) throw new Error(`Search failed (${res.status})`);
-        const data = await res.json();
-        setResults(data.results || []);
-      } catch (err: any) {
-        setError(err.message || 'Search error');
-      } finally {
-        setLoading(false);
+  async function sendMessage(text: string) {
+    const question = text.trim();
+    if (!question || loading) return;
+
+    const userMsg: Message = { role: 'user', content: question };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${FASTAPI_BASE_URL}/chat/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: question, top_k: 5 }),
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      const assistantMsg: Message = { role: 'assistant', content: data.answer, sources: data.sources };
+      const finalMessages = [...newMessages, assistantMsg];
+      setMessages(finalMessages);
+
+      // Save thread
+      const threadTitle = question.length > 40 ? question.slice(0, 40) + '…' : question;
+      const preview = data.answer.length > 60 ? data.answer.slice(0, 60) + '…' : data.answer;
+      if (activeThreadId) {
+        setThreads(prev => prev.map(t => t.id === activeThreadId ? { ...t, messages: finalMessages, preview } : t));
+      } else {
+        const newId = Date.now().toString();
+        setActiveThreadId(newId);
+        setThreads(prev => [{ id: newId, title: threadTitle, preview, messages: finalMessages }, ...prev]);
       }
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  const getBaseApiUrl = () => {
-    if (typeof window !== 'undefined' && API_BASE.includes('127.0.0.1') && window.location.hostname === 'localhost') {
-      return API_BASE.replace('127.0.0.1', 'localhost');
+    } catch {
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: "I couldn't reach the archive right now. Please check your connection and try again.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
     }
-    return API_BASE;
+  }
+
+  function startNewChat() {
+    setMessages([]);
+    setInput('');
+    setActiveThreadId(null);
+    setActiveNav('chat');
+    setTimeout(() => inputRef.current?.focus(), 150);
+  }
+
+  function loadThread(thread: ConversationThread) {
+    setMessages(thread.messages);
+    setActiveThreadId(thread.id);
+    setActiveNav('chat');
+  }
+
+  const getFullViewUrl = (viewUrl: string) => {
+    if (viewUrl.startsWith('http')) return viewUrl;
+    return `${FASTAPI_BASE_URL}${viewUrl}`;
   };
 
-  const getViewUrl = (item: SearchResultItem) => {
-    const url = item.view_url || `/search/documents/${item.id}/view`;
-    const base = getBaseApiUrl();
-    return url.startsWith('http') ? url : `${base}${url}`;
-  };
-
-  const getDownloadUrl = (item: SearchResultItem) => {
-    const url = item.download_url || `/search/documents/${item.id}/download`;
-    const base = getBaseApiUrl();
-    return url.startsWith('http') ? url : `${base}${url}`;
-  };
-
-  const isImage = (fileType: string) => {
-    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
-    return ['png', 'jpg', 'jpeg', 'webp', 'gif', 'tiff', 'tif'].includes(clean);
-  };
-
-  const isPdf = (fileType: string) => {
-    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
-    return clean === 'pdf';
-  };
-
-  const isVideo = (fileType: string) => {
-    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
-    return ['mp4', 'webm', 'mov', 'avi', 'mkv', 'ogv'].includes(clean);
-  };
-
-  const isAudio = (fileType: string) => {
-    const clean = (fileType || '').toLowerCase().replace(/^\./, '');
-    return ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma', 'opus'].includes(clean);
-  };
+  const hasStarted = messages.length > 0;
+  const charCount = input.length;
+  const maxChars = 3000;
 
   return (
     <>
-      <div ref={containerRef} className="relative">
-        {/* Floating Toggle Button (Bottom-Right Viewport Corner) */}
-        <motion.button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          whileHover={{ scale: 1.08 }}
-          whileTap={{ scale: 0.94 }}
-          className="fixed bottom-6 right-6 z-50 flex items-center justify-center rounded-full cursor-pointer shadow-2xl transition-colors outline-none focus:outline-none"
-          style={{
-            width: '64px',
-            height: '64px',
-            background: 'radial-gradient(circle at 35% 35%, #18251e, #050806)',
-            border: '1.5px solid #85683c',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.85), inset 0 0 12px rgba(133, 104, 60, 0.4), 0 0 20px rgba(225, 188, 120, 0.3)',
-          }}
-          aria-label={isOpen ? 'Close Search Assistant' : 'Open Search Assistant'}
-        >
-          {isOpen ? (
-            <svg className="w-7 h-7 text-[#E1BC78]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <div className="relative flex items-center justify-center">
-              {/* Robot Mascot Icon */}
-              <RobotIcon size={44} />
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-[#C88B47] rounded-full animate-ping opacity-75" />
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-[#E1BC78] rounded-full border border-black" />
-            </div>
-          )}
-        </motion.button>
+      {/* Floating Trigger Button */}
+      <motion.button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.94 }}
+        className="fixed bottom-6 right-6 z-[990] flex items-center justify-center rounded-full cursor-pointer outline-none focus:outline-none"
+        style={{
+          width: '64px',
+          height: '64px',
+          background: 'radial-gradient(circle at 35% 35%, #18251e, #050806)',
+          border: '1.5px solid #85683c',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.85), inset 0 0 12px rgba(133,104,60,0.4), 0 0 20px rgba(225,188,120,0.3)',
+        }}
+        aria-label={isOpen ? 'Close Search Assistant' : 'Open Search Assistant'}
+      >
+        {isOpen ? (
+          <svg className="w-7 h-7 text-[#E1BC78]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ) : (
+          <div className="relative flex items-center justify-center">
+            <RobotIcon size={44} />
+            <span className="absolute -top-1 -right-1 w-3 h-3 bg-[#C88B47] rounded-full animate-ping opacity-75" />
+            <span className="absolute -top-1 -right-1 w-3 h-3 bg-[#E1BC78] rounded-full border border-black" />
+          </div>
+        )}
+      </motion.button>
 
-        {/* Floating Chat Panel (Bottom-Right Viewport Corner) */}
+      {/* Full-Screen Chat Overlay */}
+      {createPortal(
         <AnimatePresence>
           {isOpen && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.88, y: 24, transformOrigin: 'bottom right' }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.88, y: 24 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="fixed bottom-24 right-4 sm:right-6 z-50 w-[92vw] sm:w-[410px] h-[540px] max-h-[80vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl"
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
               style={{
-                background: '#0a0f0c',
-                border: '1.5px solid #85683c',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.95), 0 0 24px rgba(133, 104, 60, 0.2)',
+                position: 'fixed',
+                inset: 0,
+                zIndex: 1000,
+                display: 'flex',
+                fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+                background: '#0f0f0d',
+                color: '#ece7d8',
               }}
             >
-              {/* Chat Header */}
+              {/* ── LEFT SIDEBAR ── */}
               <div
-                className="flex items-center justify-between px-4 py-3 bg-[#050806] border-b border-[#85683c]/40 flex-shrink-0"
-                style={{ boxShadow: 'inset 0 -10px 20px rgba(0,0,0,0.4)' }}
+                style={{
+                  width: '220px',
+                  flexShrink: 0,
+                  background: '#0d0d0a',
+                  borderRight: '1px solid #1e1e14',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: '20px 0',
+                }}
               >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-8 h-8 rounded-full flex items-center justify-center border border-[#85683c]"
-                    style={{ background: 'radial-gradient(circle, #18221b, #050806)' }}
-                  >
-                    <RobotIcon size={18} />
-                  </div>
-                  <div>
-                    <h3 className="font-cinzel text-xs font-bold text-[#E1BC78] tracking-wider leading-none">
-                      SEARCH ARCHIVE
-                    </h3>
-                    <p className="text-[10px] text-[#85683c] font-cinzel mt-1 flex items-center gap-1.5 leading-none">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Assam Regiment Digital Assistant
-                    </p>
+                {/* Logo */}
+                <div style={{ padding: '0 20px 20px', borderBottom: '1px solid #1e1e14' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div
+                      style={{
+                        width: '32px', height: '32px', borderRadius: '8px',
+                        background: 'linear-gradient(135deg, #1e2a1a, #0d1a0e)',
+                        border: '1px solid #85683c',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <RobotIcon size={18} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#E1BC78', letterSpacing: '0.04em', lineHeight: 1.2 }}>
+                        Archive
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#6b6452', letterSpacing: '0.06em' }}>
+                        Assistant
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setIsOpen(false)}
-                  className="text-gray-400 hover:text-[#E1BC78] transition-colors p-1 rounded focus:outline-none cursor-pointer"
-                  aria-label="Minimize Chat"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                {/* New Chat Button */}
+                <div style={{ padding: '16px 12px 8px' }}>
+                  <button
+                    type="button"
+                    onClick={startNewChat}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '9px 12px', borderRadius: '8px',
+                      background: '#1a1a12', border: '1px solid #2a2a1e',
+                      color: '#ece7d8', fontSize: '13px', cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = '#d4a94a';
+                      (e.currentTarget as HTMLButtonElement).style.color = '#d4a94a';
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a1e';
+                      (e.currentTarget as HTMLButtonElement).style.color = '#ece7d8';
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    New Chat
+                  </button>
+                </div>
+
+                {/* Nav Items */}
+                <nav style={{ padding: '4px 12px', flex: 1 }}>
+                  {NAV_ITEMS.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveNav(item.id)}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '10px 12px', borderRadius: '8px', border: 'none',
+                        background: activeNav === item.id ? '#1e1e14' : 'transparent',
+                        color: activeNav === item.id ? '#E1BC78' : '#6b6452',
+                        fontSize: '13px', fontWeight: activeNav === item.id ? 600 : 400,
+                        cursor: 'pointer', marginBottom: '2px',
+                        transition: 'all 0.15s ease', textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ opacity: activeNav === item.id ? 1 : 0.7 }}>{item.icon}</span>
+                      {item.label}
+                    </button>
+                  ))}
+                </nav>
+
+                {/* Bottom: Close */}
+                <div style={{ padding: '12px 12px 0', borderTop: '1px solid #1e1e14' }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsOpen(false)}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '10px 12px', borderRadius: '8px', border: 'none',
+                      background: 'transparent', color: '#6b6452',
+                      fontSize: '13px', cursor: 'pointer', transition: 'all 0.15s ease',
+                      textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#ece7d8'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#6b6452'; }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Close
+                  </button>
+                </div>
               </div>
 
-              {/* Chat Scrollable Message / Results Area */}
-              <div
-                ref={scrollRef}
-                className="flex-1 overflow-y-auto p-4 space-y-4 text-xs"
-                style={{
-                  scrollbarWidth: 'thin',
-                  scrollbarColor: '#85683c #050806',
-                }}
-              >
-                {/* Intro welcome message bubble */}
-                <div className="flex gap-2.5 items-start">
-                  <div className="w-6 h-6 rounded-full bg-[#85683c]/30 border border-[#85683c] flex items-center justify-center text-[10px] text-[#E1BC78] flex-shrink-0 mt-0.5">
-                    🪖
-                  </div>
-                  <div className="bg-[#050806] border border-[#85683c]/40 text-gray-200 rounded-2xl rounded-tl-xs p-3 max-w-[88%] shadow-md">
-                    <p className="leading-relaxed font-sans">
-                      Greetings! Ask me or type a query below to search through historical documents, War Diaries, and military records.
-                    </p>
+              {/* ── MAIN CHAT AREA ── */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
-                    {/* Quick suggestion chips */}
-                    {!query.trim() && (
-                      <div className="mt-3 pt-2 border-t border-[#85683c]/20">
-                        <span className="text-[10px] text-[#85683c] font-cinzel block mb-1.5 font-semibold">
-                          Quick Suggestions:
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {SAMPLE_SUGGESTIONS.map((tag) => (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={() => setQuery(tag)}
-                              className="text-[10px] bg-[#85683c]/20 hover:bg-[#85683c]/40 text-[#E1BC78] border border-[#85683c]/40 px-2 py-0.5 rounded-full transition-colors font-cinzel cursor-pointer"
-                            >
-                              {tag}
-                            </button>
-                          ))}
-                        </div>
+                {/* Top Bar */}
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 24px', borderBottom: '1px solid #1e1e14',
+                    background: '#0f0f0d', flexShrink: 0,
+                  }}
+                >
+                  <h2
+                    style={{
+                      fontFamily: "'Cinzel', 'Georgia', serif",
+                      fontSize: '15px', fontWeight: 700,
+                      color: '#E1BC78', letterSpacing: '0.12em', margin: 0,
+                    }}
+                  >
+                    {activeNav === 'history' ? 'CONVERSATION HISTORY' : 'ARCHIVE ASSISTANT'}
+                  </h2>
+                  <span
+                    style={{
+                      fontSize: '10px', letterSpacing: '0.1em', color: '#6b6452',
+                      border: '1px solid #1e1e14', borderRadius: '999px', padding: '3px 10px',
+                      fontFamily: 'monospace',
+                    }}
+                  >
+                    ASSAM REGIMENT DIGITAL MUSEUM
+                  </span>
+                </div>
+
+                {/* Body — history view or chat view */}
+                {activeNav === 'history' ? (
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+                    {threads.length === 0 ? (
+                      <div style={{ textAlign: 'center', color: '#6b6452', marginTop: '60px', fontSize: '14px' }}>
+                        No conversations yet. Start a new chat!
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '680px', margin: '0 auto' }}>
+                        {threads.map(thread => (
+                          <button
+                            key={thread.id}
+                            type="button"
+                            onClick={() => loadThread(thread)}
+                            style={{
+                              display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                              padding: '14px 18px', borderRadius: '10px',
+                              background: '#16160f', border: '1px solid #2a2a1e',
+                              color: '#ece7d8', cursor: 'pointer', textAlign: 'left',
+                              transition: 'all 0.15s ease',
+                            }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#d4a94a'; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2a2a1e'; }}
+                          >
+                            <span style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#ece7d8' }}>
+                              {thread.title}
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#6b6452', lineHeight: 1.4 }}>
+                              {thread.preview}
+                            </span>
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
-                </div>
-
-                {/* User Prompt Message Bubble (if query typed) */}
-                {query.trim().length > 0 && (
-                  <div className="flex justify-end">
-                    <div className="bg-[#85683c]/30 border border-[#85683c] text-[#F4E8D3] rounded-2xl rounded-tr-xs px-3.5 py-2 max-w-[85%] font-cinzel text-xs shadow-md">
-                      <span className="text-[9px] text-[#85683c] block font-sans uppercase tracking-wider mb-0.5">
-                        Searching:
-                      </span>
-                      "{query}"
-                    </div>
-                  </div>
-                )}
-
-                {/* Loading State */}
-                {loading && (
-                  <div className="flex gap-2.5 items-start">
-                    <div className="w-6 h-6 rounded-full bg-[#85683c]/30 border border-[#85683c] flex items-center justify-center text-[10px] text-[#E1BC78] flex-shrink-0">
-                      ⚡
-                    </div>
-                    <div className="bg-[#050806] border border-[#85683c]/40 text-[#E1BC78] rounded-2xl rounded-tl-xs px-4 py-3 font-cinzel text-xs flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 rounded-full bg-[#E1BC78] animate-ping" />
-                      Searching archive records...
-                    </div>
-                  </div>
-                )}
-
-                {/* Error State */}
-                {error && (
-                  <div className="flex gap-2.5 items-start">
-                    <div className="w-6 h-6 rounded-full bg-red-950 border border-red-700 flex items-center justify-center text-[10px] text-red-400 flex-shrink-0">
-                      ⚠️
-                    </div>
-                    <div className="bg-red-950/40 border border-red-800/60 text-red-300 rounded-2xl rounded-tl-xs p-3">
-                      {error}
-                    </div>
-                  </div>
-                )}
-
-                {/* Empty State */}
-                {!loading && !error && query.trim().length > 0 && results.length === 0 && (
-                  <div className="flex gap-2.5 items-start">
-                    <div className="w-6 h-6 rounded-full bg-[#85683c]/30 border border-[#85683c] flex items-center justify-center text-[10px] text-[#E1BC78] flex-shrink-0">
-                      🔍
-                    </div>
-                    <div className="bg-[#050806] border border-[#85683c]/40 text-[#85683c] font-cinzel rounded-2xl rounded-tl-xs p-3">
-                      No matching archive items found for "{query}". Try checking spelling or using alternate terms.
-                    </div>
-                  </div>
-                )}
-
-                {/* Results List as Chat Card Bubbles */}
-                {!loading && results.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="text-[10px] text-[#85683c] font-cinzel tracking-wider uppercase text-center py-1 border-b border-[#85683c]/20">
-                      Found {results.length} matching document{results.length > 1 ? 's' : ''}
-                    </div>
-
-                    {results.map((item) => {
-                      const isOcrPending = item.ocr_status === 'pending';
-                      const excerptText = item.ocr_excerpt || item.icr_excerpt;
-                      const excerptType = item.ocr_excerpt ? 'OCR' : item.icr_excerpt ? 'ICR (Handwritten)' : null;
-
-                      return (
-                        <div key={item.id} className="flex gap-2 items-start">
+                ) : (
+                  <>
+                    {/* Scrollable messages or hero */}
+                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+                      {!hasStarted ? (
+                        /* ── Welcome Hero ── */
+                        <div
+                          style={{
+                            flex: 1, display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center',
+                            padding: '40px 24px', textAlign: 'center',
+                          }}
+                        >
                           <div
-                            className="bg-[#050806] hover:bg-[#070c09] border border-[#85683c]/40 hover:border-[#E1BC78] text-left rounded-xl p-3 w-full transition-all duration-200 shadow-md group cursor-pointer"
-                            onClick={() => setSelectedDoc(item)}
+                            style={{
+                              width: '64px', height: '64px', borderRadius: '50%',
+                              background: 'linear-gradient(135deg, #1e2a1a, #0d1a0e)',
+                              border: '2px solid #85683c',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              marginBottom: '20px',
+                              boxShadow: '0 0 30px rgba(133,104,60,0.25)',
+                            }}
                           >
-                            {/* Card Top Header */}
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-cinzel text-xs font-bold text-[#E1BC78] group-hover:text-[#F4E8D3] transition-colors leading-tight">
-                                  <HighlightedText text={item.title} query={query} />
-                                </span>
-                                {isVideo(item.file_type) && (
-                                  <span className="text-[9px] text-[#E1BC78] px-1.5 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider flex-shrink-0">
-                                    🎬 VIDEO
-                                  </span>
-                                )}
-                                {isAudio(item.file_type) && (
-                                  <span className="text-[9px] text-[#E1BC78] px-1.5 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider flex-shrink-0">
-                                    🎵 AUDIO
-                                  </span>
-                                )}
-                                {isPdf(item.file_type) && (
-                                  <span className="text-[9px] text-gray-400 px-1.5 py-0.5 rounded bg-black/50 border border-gray-700 font-mono flex-shrink-0">
-                                    PDF
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-[#C88B47] px-1.5 py-0.5 rounded bg-black/60 border border-[#85683c]/40 font-mono whitespace-nowrap flex-shrink-0">
-                                {(item.similarity * 100).toFixed(1)}% match
-                              </span>
-                            </div>
+                            <RobotIcon size={34} />
+                          </div>
 
-                            {/* OCR Pending Notice Flag */}
-                            {isOcrPending && (
-                              <div className="my-1.5 flex items-center gap-1.5 text-[9.5px] text-amber-300 bg-amber-950/60 border border-amber-600/50 px-2 py-0.5 rounded">
-                                <span className="flex-shrink-0">⚠️</span>
-                                <span>OCR Pending — Match derived from ICR text</span>
-                              </div>
-                            )}
+                          <h1
+                            style={{
+                              fontFamily: "'Cinzel', 'Georgia', serif",
+                              fontSize: 'clamp(1.8rem, 3vw, 2.6rem)',
+                              fontWeight: 700, color: '#ece7d8',
+                              margin: '0 0 10px', letterSpacing: '0.02em',
+                            }}
+                          >
+                            Ask the Archive
+                          </h1>
+                          <p style={{ color: '#6b6452', fontSize: '15px', margin: '0 0 36px', maxWidth: '500px', lineHeight: 1.6 }}>
+                            Search across historical documents, war diaries, and military records — grounded in the museum's own AI archive.
+                          </p>
 
-                            {/* Tags */}
-                            {item.tags && (
-                              <div className="text-[10px] text-[#85683c] mt-1 truncate">
-                                🏷️ <HighlightedText text={item.tags} query={query} />
-                              </div>
-                            )}
-
-                            {/* Description */}
-                            {item.description && (
-                              <div className="text-[10px] text-gray-300 mt-1 line-clamp-2 italic bg-black/30 p-1.5 rounded border border-[#85683c]/20">
-                                "<HighlightedText text={item.description} query={query} />"
-                              </div>
-                            )}
-
-                            {/* Excerpt */}
-                            {excerptText && (
-                              <div className="text-[10px] text-gray-300 mt-1.5 line-clamp-2 bg-black/40 p-1.5 rounded border border-[#85683c]/20">
-                                📄 <span className="text-[#E1BC78]/80 font-mono text-[9px] font-semibold">[{excerptType}]: </span>
-                                <HighlightedText text={excerptText} query={query} />
-                              </div>
-                            )}
-
-                            {/* Action footer link */}
-                            <div className="mt-2 pt-1 border-t border-[#85683c]/20 flex items-center justify-end text-[10px] text-[#E1BC78] group-hover:text-[#F4E8D3] font-cinzel font-semibold">
-                              <span>Inspect Document ↗</span>
-                            </div>
+                          {/* Suggestion Cards Grid */}
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(2, 1fr)',
+                              gap: '12px',
+                              width: '100%',
+                              maxWidth: '560px',
+                              marginBottom: '32px',
+                            }}
+                          >
+                            {SUGGESTIONS.map(s => (
+                              <button
+                                key={s.prompt}
+                                type="button"
+                                onClick={() => sendMessage(s.prompt)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: '12px',
+                                  padding: '16px 18px', borderRadius: '12px',
+                                  background: '#16160f', border: '1px solid #2a2a1e',
+                                  color: '#ece7d8', fontSize: '13px', fontWeight: 500,
+                                  cursor: 'pointer', textAlign: 'left',
+                                  transition: 'all 0.18s ease',
+                                }}
+                                onMouseEnter={e => {
+                                  const el = e.currentTarget as HTMLButtonElement;
+                                  el.style.borderColor = '#d4a94a';
+                                  el.style.background = '#1a1a0f';
+                                  el.style.color = '#d4a94a';
+                                }}
+                                onMouseLeave={e => {
+                                  const el = e.currentTarget as HTMLButtonElement;
+                                  el.style.borderColor = '#2a2a1e';
+                                  el.style.background = '#16160f';
+                                  el.style.color = '#ece7d8';
+                                }}
+                              >
+                                <span style={{ fontSize: '20px' }}>{s.icon}</span>
+                                <span style={{ lineHeight: 1.3 }}>{s.label}</span>
+                                <svg
+                                  style={{ marginLeft: 'auto', flexShrink: 0, opacity: 0.4 }}
+                                  width="14" height="14" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" strokeWidth="2"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                                </svg>
+                              </button>
+                            ))}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      ) : (
+                        /* ── Active Conversation ── */
+                        <div style={{ maxWidth: '760px', width: '100%', margin: '0 auto', padding: '28px 20px 8px' }}>
+                          {messages.map((m, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                display: 'flex',
+                                justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
+                                marginBottom: '18px',
+                              }}
+                            >
+                              {m.role === 'assistant' && (
+                                <div
+                                  style={{
+                                    width: '28px', height: '28px', borderRadius: '50%',
+                                    background: '#1e2a1a', border: '1px solid #85683c',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    flexShrink: 0, marginRight: '10px', marginTop: '4px',
+                                  }}
+                                >
+                                  <RobotIcon size={14} />
+                                </div>
+                              )}
+                              <div
+                                style={{
+                                  maxWidth: '78%', padding: '12px 16px', borderRadius: '14px',
+                                  fontSize: '14px', lineHeight: 1.65, whiteSpace: 'pre-wrap',
+                                  ...(m.role === 'user'
+                                    ? {
+                                        background: '#d4a94a', color: '#171207',
+                                        fontWeight: 500, borderBottomRightRadius: '4px',
+                                      }
+                                    : {
+                                        background: '#16160f', border: '1px solid #2a2a1e',
+                                        color: '#ece7d8', borderBottomLeftRadius: '4px',
+                                      }),
+                                }}
+                              >
+                                {m.content}
+
+                                {m.sources && m.sources.length > 0 && (
+                                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2a2a1e' }}>
+                                    <div style={{ fontSize: '10px', color: '#8a8578', fontWeight: 600, marginBottom: '8px', letterSpacing: '0.08em' }}>
+                                      SOURCES &amp; DOCUMENTS
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                      {m.sources.map(s => {
+                                        const ft = (s.file_type ?? '').toLowerCase();
+                                        const fullUrl = getFullViewUrl(s.view_url);
+                                        const isAudio = ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a'].includes(ft);
+                                        const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ft);
+
+                                        // Shared pill link (always rendered)
+                                        const pillIcon = isAudio ? '🎵' : isVideo ? '🎬' : '📄';
+                                        const pill = (
+                                          <a
+                                            href={fullUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            style={{
+                                              fontSize: '11px', color: '#d4a94a',
+                                              background: 'rgba(212,169,74,0.1)',
+                                              border: '1px solid rgba(212,169,74,0.3)',
+                                              borderRadius: '999px', padding: '3px 10px',
+                                              textDecoration: 'none', display: 'inline-flex',
+                                              alignItems: 'center', gap: '4px',
+                                              alignSelf: 'flex-start',
+                                            }}
+                                          >
+                                            {pillIcon} {s.title} · <span style={{ fontFamily: 'monospace' }}>{Math.round(s.similarity * 100)}%</span> ↗
+                                          </a>
+                                        );
+
+                                        if (isAudio) {
+                                          return (
+                                            <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                              {pill}
+                                              <audio
+                                                controls
+                                                src={fullUrl}
+                                                style={{
+                                                  width: '100%', maxWidth: '420px',
+                                                  height: '36px', borderRadius: '8px',
+                                                  accentColor: '#d4a94a',
+                                                }}
+                                              />
+                                            </div>
+                                          );
+                                        }
+
+                                        if (isVideo) {
+                                          return (
+                                            <div key={s.id} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                              {pill}
+                                              <video
+                                                controls
+                                                src={fullUrl}
+                                                style={{
+                                                  width: '100%', maxWidth: '440px',
+                                                  borderRadius: '10px',
+                                                  border: '1px solid #2a2a1e',
+                                                  background: '#000',
+                                                }}
+                                              />
+                                            </div>
+                                          );
+                                        }
+
+                                        // Default: document pill only
+                                        return <div key={s.id}>{pill}</div>;
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+
+                          {loading && (
+                            <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '18px' }}>
+                              <div
+                                style={{
+                                  width: '28px', height: '28px', borderRadius: '50%',
+                                  background: '#1e2a1a', border: '1px solid #85683c',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  flexShrink: 0, marginRight: '10px',
+                                }}
+                              >
+                                <RobotIcon size={14} />
+                              </div>
+                              <div
+                                style={{
+                                  background: '#16160f', border: '1px solid #2a2a1e',
+                                  borderRadius: '14px', borderBottomLeftRadius: '4px',
+                                  padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '8px',
+                                }}
+                              >
+                                {[0, 1, 2].map(i => (
+                                  <span
+                                    key={i}
+                                    style={{
+                                      display: 'inline-block', width: '6px', height: '6px',
+                                      borderRadius: '50%', background: '#d4a94a',
+                                      animation: `pac-bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div ref={scrollRef} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Input Bar (always visible at bottom) ── */}
+                    <div
+                      style={{
+                        flexShrink: 0, padding: '16px 24px 20px',
+                        borderTop: '1px solid #1e1e14', background: '#0f0f0d',
+                      }}
+                    >
+                      <div
+                        style={{
+                          maxWidth: '760px', margin: '0 auto',
+                          background: '#16160f', border: '1px solid #2a2a1e',
+                          borderRadius: '14px', padding: '12px 16px',
+                          transition: 'border-color 0.15s ease',
+                          boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+                        }}
+                        onFocus={() => {}}
+                        onBlur={() => {}}
+                        ref={node => {
+                          if (node) {
+                            node.onfocus = () => { node.style.borderColor = '#d4a94a'; };
+                            node.onblur = () => { node.style.borderColor = '#2a2a1e'; };
+                          }
+                        }}
+                      >
+                        <textarea
+                          ref={inputRef}
+                          value={input}
+                          rows={1}
+                          onChange={e => setInput(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              sendMessage(input);
+                            }
+                          }}
+                          placeholder={hasStarted ? 'Ask a follow-up question...' : 'Ask anything about the archive...'}
+                          style={{
+                            display: 'block', width: '100%',
+                            background: 'transparent', border: 'none', outline: 'none',
+                            color: '#ece7d8', fontSize: '14px', lineHeight: 1.6,
+                            resize: 'none', overflowY: 'hidden',
+                            fontFamily: 'inherit',
+                          }}
+                          maxLength={maxChars}
+                        />
+
+                        {/* Toolbar row */}
+                        <div
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1e1e14',
+                          }}
+                        >
+                          <span style={{ fontSize: '11px', color: '#4a4a38', fontFamily: 'monospace' }}>
+                            {charCount} / {maxChars.toLocaleString()}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => sendMessage(input)}
+                            disabled={!input.trim() || loading}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              width: '34px', height: '34px', borderRadius: '8px',
+                              background: input.trim() && !loading ? '#d4a94a' : '#1e1e14',
+                              border: input.trim() && !loading ? '1px solid #d4a94a' : '1px solid #2a2a1e',
+                              color: input.trim() && !loading ? '#171207' : '#4a4a38',
+                              cursor: input.trim() && !loading ? 'pointer' : 'not-allowed',
+                              transition: 'all 0.15s ease',
+                              flexShrink: 0,
+                            }}
+                            aria-label="Send message"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '11px', color: '#3a3a2a' }}>
+                        Archive Assistant may generate inaccurate information. Always verify against source documents.
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
 
-              {/* Chat Input Box */}
-              <div className="p-3 bg-[#050806] border-t border-[#85683c]/40 flex items-center gap-2 flex-shrink-0">
-                <div className="relative flex-1 flex items-center">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Type query to search archive..."
-                    className="w-full bg-[#0a0f0c] text-[#F4E8D3] border border-[#85683c]/60 focus:border-[#E1BC78] rounded-xl px-3 py-2 text-xs font-cinzel placeholder-[#85683c] outline-none shadow-inner transition-colors pr-7"
-                  />
-                  {query && (
-                    <button
-                      type="button"
-                      onClick={() => setQuery('')}
-                      className="absolute right-2 text-[#85683c] hover:text-[#E1BC78] text-xs focus:outline-none cursor-pointer"
-                      aria-label="Clear query"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                <div className="w-8 h-8 rounded-xl bg-[#85683c]/20 border border-[#85683c]/50 flex items-center justify-center text-[#E1BC78] flex-shrink-0">
-                  <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+              {/* ── RIGHT SIDEBAR — Recent Conversations ── */}
+              <div
+                style={{
+                  width: '260px', flexShrink: 0,
+                  background: '#0d0d0a', borderLeft: '1px solid #1e1e14',
+                  display: 'flex', flexDirection: 'column',
+                  padding: '20px 0',
+                  overflowY: 'auto',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '0 16px 14px', borderBottom: '1px solid #1e1e14',
+                  }}
+                >
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b6452', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                    Recent ({threads.length})
+                  </span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b6452" strokeWidth="1.8">
+                    <circle cx="12" cy="12" r="10" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3" />
                   </svg>
                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
 
-      {/* Document Viewer Modal (Unchanged functionality) */}
-      <AnimatePresence>
-        {selectedDoc && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-            onClick={() => setSelectedDoc(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl p-6 shadow-2xl"
-              style={{
-                background: '#0a0f0c',
-                border: '1.5px solid #85683c',
-                boxShadow: '0 20px 50px rgba(0,0,0,0.9)',
-              }}
-            >
-              {/* Close button */}
-              <button
-                onClick={() => setSelectedDoc(null)}
-                className="absolute top-4 right-4 text-gray-400 hover:text-[#E1BC78] text-xl font-bold p-1 cursor-pointer"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
-
-              {/* Title & Metadata */}
-              <div className="pr-8 mb-4">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <h2 className="font-cinzel text-lg font-bold text-[#E1BC78]">
-                    <HighlightedText text={selectedDoc.title} query={query} />
-                  </h2>
-                  <span className="text-xs text-[#C88B47] px-2 py-0.5 rounded bg-black/60 border border-[#85683c]">
-                    {(selectedDoc.similarity * 100).toFixed(1)}% Match
-                  </span>
-                  {isVideo(selectedDoc.file_type) ? (
-                    <span className="text-xs text-[#E1BC78] px-2 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider uppercase">
-                      🎬 VIDEO ({selectedDoc.file_type})
-                    </span>
-                  ) : isAudio(selectedDoc.file_type) ? (
-                    <span className="text-xs text-[#E1BC78] px-2 py-0.5 rounded bg-[#85683c]/30 border border-[#85683c]/60 font-semibold font-cinzel tracking-wider uppercase">
-                      🎵 AUDIO ({selectedDoc.file_type})
-                    </span>
+                <div style={{ flex: 1, padding: '12px 12px' }}>
+                  {threads.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#3a3a2a', fontSize: '12px', marginTop: '24px', lineHeight: 1.6 }}>
+                      Your conversation<br />history will appear here
+                    </div>
                   ) : (
-                    <span className="text-xs text-gray-400 px-2 py-0.5 rounded bg-black/40 border border-gray-700 uppercase">
-                      {selectedDoc.file_type}
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {threads.map(thread => (
+                        <button
+                          key={thread.id}
+                          type="button"
+                          onClick={() => loadThread(thread)}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                            padding: '10px 12px', borderRadius: '8px', border: 'none',
+                            background: activeThreadId === thread.id ? '#1e1e14' : 'transparent',
+                            cursor: 'pointer', textAlign: 'left', width: '100%',
+                            transition: 'background 0.12s ease',
+                          }}
+                          onMouseEnter={e => {
+                            if (activeThreadId !== thread.id)
+                              (e.currentTarget as HTMLButtonElement).style.background = '#16160f';
+                          }}
+                          onMouseLeave={e => {
+                            if (activeThreadId !== thread.id)
+                              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: '12px', fontWeight: 600,
+                              color: activeThreadId === thread.id ? '#E1BC78' : '#ece7d8',
+                              marginBottom: '3px', lineHeight: 1.3,
+                              display: '-webkit-box', WebkitLineClamp: 1,
+                              WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                              width: '100%',
+                            }}
+                          >
+                            {thread.title}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: '11px', color: '#4a4a38', lineHeight: 1.4,
+                              display: '-webkit-box', WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                              width: '100%',
+                            }}
+                          >
+                            {thread.preview}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
-
-                {(selectedDoc.category || selectedDoc.collection) && (
-                  <p className="text-xs text-[#85683c] font-cinzel">
-                    {selectedDoc.category && `Category: ${selectedDoc.category}`}
-                    {selectedDoc.category && selectedDoc.collection && ' | '}
-                    {selectedDoc.collection && `Collection: ${selectedDoc.collection}`}
-                  </p>
-                )}
               </div>
 
-              {/* OCR Pending Notice Flag */}
-              {isPdf(selectedDoc.file_type) && selectedDoc.ocr_status === 'pending' && Boolean(selectedDoc.icr_excerpt) && (
-                <div className="mb-4 p-3 rounded-lg bg-amber-950/60 border border-amber-600/50 text-amber-300 text-xs">
-                  <div className="font-semibold flex items-center gap-1.5 mb-1 text-amber-400">
-                    <span>⚠️</span> OCR Status: Pending
-                  </div>
-                  <p className="text-amber-200/90 leading-relaxed">
-                    Primary OCR processing has not finished for this document. Search matches are currently based on handwritten ICR text extraction, which may produce lower confidence or garbled matches.
-                  </p>
-                </div>
-              )}
-
-              {/* Document Preview Viewer */}
-              <div className="mb-4 bg-[#050806] rounded-lg p-2 border border-[#85683c]/30 flex flex-col items-center justify-center">
-                {isImage(selectedDoc.file_type) ? (
-                  <img
-                    src={getViewUrl(selectedDoc)}
-                    alt={selectedDoc.title}
-                    className="max-h-[55vh] object-contain rounded border border-[#85683c]/40"
-                    onLoad={() => console.log('[Image Viewer] Image loaded successfully:', getViewUrl(selectedDoc))}
-                    onError={(e) => console.error('[Image Viewer] Failed to load image:', getViewUrl(selectedDoc), e)}
-                  />
-                ) : isPdf(selectedDoc.file_type) ? (
-                  <object
-                    data={`${getViewUrl(selectedDoc)}#toolbar=0&navpanes=0`}
-                    type="application/pdf"
-                    className="w-full h-[55vh] rounded border border-[#85683c]/40 bg-[#050806]"
-                    onLoad={() => console.log('[PDF Viewer] Object element loaded:', getViewUrl(selectedDoc))}
-                    onError={(e) => console.error('[PDF Viewer] Object element load error:', e)}
-                  >
-                    <embed
-                      src={`${getViewUrl(selectedDoc)}#toolbar=0&navpanes=0`}
-                      type="application/pdf"
-                      className="w-full h-[55vh] rounded border border-[#85683c]/40"
-                      onLoad={() => console.log('[PDF Viewer] Embed element loaded:', getViewUrl(selectedDoc))}
-                      onError={(e) => console.error('[PDF Viewer] Embed element load error:', e)}
-                    />
-                    <iframe
-                      src={getViewUrl(selectedDoc)}
-                      title={selectedDoc.title}
-                      className="w-full h-[55vh] rounded border border-[#85683c]/40 bg-white"
-                      onLoad={() => console.log('[PDF Viewer] Iframe element loaded:', getViewUrl(selectedDoc))}
-                      onError={(e) => console.error('[PDF Viewer] Iframe element load error:', e)}
-                    />
-                  </object>
-                ) : isVideo(selectedDoc.file_type) ? (
-                  <video
-                    src={getViewUrl(selectedDoc)}
-                    controls
-                    className="w-full max-h-[55vh] rounded border border-[#85683c]/40 bg-black"
-                    onLoadedData={() => console.log('[Video Viewer] Loaded:', getViewUrl(selectedDoc))}
-                    onError={(e) => console.error('[Video Viewer] Failed to load:', getViewUrl(selectedDoc), e)}
-                  />
-                ) : isAudio(selectedDoc.file_type) ? (
-                  <div className="w-full p-6 bg-[#0a0f0c] rounded border border-[#85683c]/40 flex flex-col items-center gap-4">
-                    <div className="text-4xl text-[#E1BC78] animate-pulse">🎵</div>
-                    <div className="text-xs text-[#E1BC78] font-cinzel font-semibold">Audio Recording Stream</div>
-                    <audio
-                      src={getViewUrl(selectedDoc)}
-                      controls
-                      className="w-full max-w-md rounded border border-[#85683c]/40 bg-black"
-                      onLoadedData={() => console.log('[Audio Viewer] Loaded:', getViewUrl(selectedDoc))}
-                      onError={(e) => console.error('[Audio Viewer] Failed to load:', getViewUrl(selectedDoc), e)}
-                    />
-                  </div>
-                ) : (
-                  <div className="py-12 text-center text-gray-400">
-                    <p className="mb-2">Preview not directly inlineable for .{selectedDoc.file_type} files.</p>
-                  </div>
-                )}
-
-                <div className="mt-3 flex items-center justify-center gap-3 flex-wrap">
-                  <a
-                    href={getDownloadUrl(selectedDoc)}
-                    download
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded text-xs font-semibold font-cinzel text-[#F4E8D3] bg-[#C88B47]/30 hover:bg-[#C88B47]/60 border border-[#C88B47] transition-colors"
-                  >
-                    📥 Download Document
-                  </a>
-                  <a
-                    href={getViewUrl(selectedDoc)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded text-xs font-semibold font-cinzel text-[#F4E8D3] bg-[#85683c]/40 hover:bg-[#85683c]/70 border border-[#85683c] transition-colors"
-                  >
-                    Open Document File in New Tab ↗
-                  </a>
-                </div>
-              </div>
-
-              {/* Excerpts & Descriptions */}
-              <div className="space-y-3 text-xs border-t border-[#85683c]/30 pt-3">
-                {selectedDoc.ocr_excerpt && (
-                  <div className="bg-[#050806] p-3 rounded border border-[#85683c]/20">
-                    <span className="font-semibold text-[#E1BC78] block mb-1 font-cinzel">
-                      📄 OCR Excerpt:
-                    </span>
-                    <p className="text-gray-300 leading-relaxed">
-                      <HighlightedText text={selectedDoc.ocr_excerpt} query={query} />
-                    </p>
-                  </div>
-                )}
-
-                {selectedDoc.icr_excerpt && (
-                  <div className="bg-[#050806] p-3 rounded border border-[#85683c]/20">
-                    <span className="font-semibold text-[#E1BC78] block mb-1 font-cinzel">
-                      ✍️ ICR (Handwritten Text) Excerpt:
-                    </span>
-                    <p className="text-gray-300 leading-relaxed">
-                      <HighlightedText text={selectedDoc.icr_excerpt} query={query} />
-                    </p>
-                  </div>
-                )}
-
-                {selectedDoc.description && (
-                  <div>
-                    <span className="font-semibold text-[#85683c] block mb-0.5">Description:</span>
-                    <p className="text-gray-300 italic">
-                      <HighlightedText text={selectedDoc.description} query={query} />
-                    </p>
-                  </div>
-                )}
-
-                {selectedDoc.tags && (
-                  <div>
-                    <span className="font-semibold text-[#85683c] block mb-0.5">Tags:</span>
-                    <p className="text-gray-400">
-                      🏷️ <HighlightedText text={selectedDoc.tags} query={query} />
-                    </p>
-                  </div>
-                )}
-              </div>
+              {/* Bounce animation keyframes */}
+              <style>{`
+                @keyframes pac-bounce {
+                  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+                  40% { transform: scale(1); opacity: 1; }
+                }
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+              `}</style>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }
-

@@ -17,29 +17,65 @@ def _run_ocr_job(document_id: uuid.UUID):
     """
     Runs in the background. Opens its OWN db session because the request's
     session will already be closed by the time this executes.
+
+    The long OCR work can exceed Neon's ~300 s idle-SSL timeout, so we use
+    the same 3-phase pattern as _run_combined_job: mark IN_PROGRESS, close
+    the session, do the heavy work, then open a fresh session to write back.
     """
+    # ── Phase 1: mark as IN_PROGRESS ────────────────────────────────────────
     db = SessionLocal()
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
         if not document:
             return
-
+        file_path = document.file_path
+        file_type = document.file_type
         document.ocr_status = ProcessingStatus.IN_PROGRESS
         db.commit()
-
-        try:
-            text = run_ocr(document.file_path, document.file_type)
-            document.ocr_text = text
-            document.ocr_status = ProcessingStatus.DONE
-            db.commit()
-            recompute_and_save_embedding(document, db)
-        except Exception:
-            # Keep the error visible in the terminal for debugging
-            print(f"[OCR ERROR] document_id={document_id}\n{traceback.format_exc()}")
-            document.ocr_status = ProcessingStatus.FAILED
-            db.commit()
     finally:
         db.close()
+
+    # ── Phase 2: heavy OCR work (no DB session held) ─────────────────────────
+    ocr_text: str | None = None
+    ocr_error: str | None = None
+    try:
+        ocr_text = run_ocr(file_path, file_type)
+    except Exception:
+        ocr_error = traceback.format_exc()
+        print(f"[OCR ERROR] document_id={document_id}\n{ocr_error}")
+
+    # ── Phase 3: write result with a fresh session ───────────────────────────
+    db2 = SessionLocal()
+    try:
+        document = db2.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            return
+        if ocr_error:
+            document.ocr_status = ProcessingStatus.FAILED
+        else:
+            document.ocr_text = ocr_text
+            document.ocr_status = ProcessingStatus.DONE
+        db2.commit()
+        if not ocr_error:
+            recompute_and_save_embedding(document, db2)
+    except Exception:
+        print(f"[OCR WRITE-BACK ERROR] document_id={document_id}\n{traceback.format_exc()}")
+        try:
+            db2.rollback()
+        except Exception:
+            pass
+        db3 = SessionLocal()
+        try:
+            doc = db3.query(Document).filter(Document.id == document_id).first()
+            if doc:
+                doc.ocr_status = ProcessingStatus.FAILED
+                db3.commit()
+        except Exception:
+            pass
+        finally:
+            db3.close()
+    finally:
+        db2.close()
 
 
 
@@ -122,32 +158,64 @@ def get_ocr_result(document_id: uuid.UUID, db: Session = Depends(get_db)):
 
 def _run_combined_job(document_id: uuid.UUID):
     """
-    Same pattern as the plain OCR job, but calls the combined OCR+ICR
-    pipeline instead — automatically detects and re-recognizes low-
-    confidence (likely handwritten) lines within an otherwise printed page.
+    Same pattern as _run_ocr_job. Uses the 3-phase session approach so the
+    long run_combined() call does not hold an SSL connection open past Neon's
+    ~300 s idle timeout.
     """
+    # ── Phase 1: mark as IN_PROGRESS ────────────────────────────────────────
     db = SessionLocal()
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
         if not document:
             return
-
+        file_path = document.file_path
+        file_type = document.file_type
         document.ocr_status = ProcessingStatus.IN_PROGRESS
         db.commit()
-
-        try:
-            text = run_combined(document.file_path, document.file_type)
-            document.ocr_text = text
-            document.ocr_status = ProcessingStatus.DONE
-            db.commit()
-            recompute_and_save_embedding(document, db)
-        except Exception:
-            print(f"[COMBINED OCR+ICR ERROR] document_id={document_id}\n{traceback.format_exc()}")
-            document.ocr_status = ProcessingStatus.FAILED
-            db.commit()
-
     finally:
         db.close()
+
+    # ── Phase 2: heavy OCR+ICR work (no DB session held) ─────────────────────
+    ocr_text: str | None = None
+    ocr_error: str | None = None
+    try:
+        ocr_text = run_combined(file_path, file_type)
+    except Exception:
+        ocr_error = traceback.format_exc()
+        print(f"[COMBINED OCR+ICR ERROR] document_id={document_id}\n{ocr_error}")
+
+    # ── Phase 3: write result with a *fresh* session ─────────────────────────
+    db2 = SessionLocal()
+    try:
+        document = db2.query(Document).filter(Document.id == document_id).first()
+        if not document:
+            return
+        if ocr_error:
+            document.ocr_status = ProcessingStatus.FAILED
+        else:
+            document.ocr_text = ocr_text
+            document.ocr_status = ProcessingStatus.DONE
+        db2.commit()
+        if not ocr_error:
+            recompute_and_save_embedding(document, db2)
+    except Exception:
+        print(f"[COMBINED WRITE-BACK ERROR] document_id={document_id}\n{traceback.format_exc()}")
+        try:
+            db2.rollback()
+        except Exception:
+            pass
+        db3 = SessionLocal()
+        try:
+            doc = db3.query(Document).filter(Document.id == document_id).first()
+            if doc:
+                doc.ocr_status = ProcessingStatus.FAILED
+                db3.commit()
+        except Exception:
+            pass
+        finally:
+            db3.close()
+    finally:
+        db2.close()
 
 
 @router.post("/start-combined/{document_id}")
