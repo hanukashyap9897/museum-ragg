@@ -7,6 +7,9 @@ frontend/.env
 __pycache__/
 *.pyc
 *.pyo
+.env
+app/.env
+uploads
 
 # Node dependencies
 node_modules/
