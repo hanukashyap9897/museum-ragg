@@ -16,3 +16,5 @@ torch>=2.0.0
 sentencepiece>=0.1.99
 pgvector
 sentence-transformers>=3.0.0
+groq
+python-dotenv
