@@ -168,7 +168,8 @@ def search_documents(
         if has_keyword_match and query_terms:
             matched_count = sum(1 for term in query_terms if term in doc_text)
             match_ratio = matched_count / max(1, len(query_terms))
-            sim = max(sim, round(0.70 + 0.25 * match_ratio, 4))
+            if match_ratio >= 0.6:
+                sim = max(sim, round(0.55 + 0.30 * match_ratio, 4))
 
         # Filter out completely unrelated items (less than 15% similarity and no keyword match)
         if sim < 0.15 and not has_keyword_match:
@@ -185,10 +186,12 @@ def search_documents(
             doc_text = f"{doc.title or ''} {doc.tags or ''} {doc.description or ''}".lower()
             matched_count = sum(1 for term in query_terms if term in doc_text) if query_terms else 1
             match_ratio = matched_count / max(1, len(query_terms))
-            sim = round(0.75 + 0.20 * match_ratio, 4)
+            if match_ratio < 0.6:
+                continue
+            sim = round(0.55 + 0.25 * match_ratio, 4)
             combined_results.append((doc, sim))
 
-    MIN_SIMILARITY_THRESHOLD = 0.35
+    MIN_SIMILARITY_THRESHOLD = 0.55
 
     # Final filter: strictly exclude irrelevant documents (require >= 35% similarity OR direct keyword match)
     filtered_results = []
@@ -196,7 +199,7 @@ def search_documents(
         doc_text = f"{doc.title or ''} {doc.tags or ''} {doc.description or ''} {doc.ocr_text or ''} {doc.icr_text or ''}".lower()
         has_kw = any(term in doc_text for term in query_terms) if query_terms else False
         
-        if has_kw or sim >= MIN_SIMILARITY_THRESHOLD:
+        if sim >= MIN_SIMILARITY_THRESHOLD:
             filtered_results.append((doc, sim))
 
     filtered_results.sort(key=lambda x: x[1], reverse=True)

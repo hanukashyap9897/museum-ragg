@@ -29,6 +29,7 @@ import re
 import traceback
 import uuid
 from functools import lru_cache
+from html.parser import HTMLParser
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -56,6 +57,88 @@ SIGNATURE_ZONE_HEIGHT_PX = 140
 # Table is handled separately since its block_content is reconstructed HTML.
 # NOTE: verify this set against your installed version — see module docstring.
 TEXT_LIKE_TYPES = {"text", "title", "doc_title", "paragraph_title", "figure_title", "list", "header"}
+
+
+class _TableHTMLParser(HTMLParser):
+    """Minimal SAX-style parser that walks PaddleOCR's reconstructed table HTML
+    and collects cell text, building one pipe-delimited string per row.
+
+    PaddleOCR returns tables as raw HTML (<table><tr><td>…</td></tr></table>).
+    This is great for the UI viewer but completely invisible to the embedding
+    model, which only sees the flat clean_text string.  Serialising each row
+    as "col1 | col2 | col3" makes every cell individually searchable.
+    """
+    def __init__(self):
+        super().__init__()
+        self._rows: list[list[str]] = []
+        self._current_row: list[str] | None = None
+        self._current_cell: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self._current_row = []
+        elif tag in ("td", "th") and self._current_row is not None:
+            self._current_cell = ""
+
+    def handle_endtag(self, tag):
+        if tag in ("td", "th") and self._current_cell is not None:
+            self._current_row.append(self._current_cell.strip())
+            self._current_cell = None
+        elif tag == "tr" and self._current_row is not None:
+            if any(c for c in self._current_row):  # skip blank rows
+                self._rows.append(self._current_row)
+            self._current_row = None
+
+    def handle_data(self, data):
+        if self._current_cell is not None:
+            self._current_cell += data
+
+    def rows(self) -> list[list[str]]:
+        return self._rows
+
+
+def _table_html_to_text(html: str, header_row: bool = True) -> str:
+    """Converts an HTML table (as produced by PPStructureV3 or PyMuPDF's
+    tab.extract()) into a flat, human-readable string suitable for embedding.
+
+    Strategy:
+    - If the table has a first row that looks like a header (all cells
+      non-empty and no cell is purely numeric), treat it as column labels and
+      format every subsequent row as "Label: value | Label: value …".
+    - Otherwise (or if header_row=False), just emit "val1 | val2 | val3" rows.
+
+    Example output (with headers):
+        SNo: 1 | Subject: Trg on next gen eqpt | Issued: No equip scaled | Proposal: Expose all offrs
+        SNo: 2 | Subject: APTS revision        | Issued: Out of date      | Proposal: Update syllabus
+    """
+    if not html:
+        return ""
+
+    parser = _TableHTMLParser()
+    parser.feed(html)
+    rows = parser.rows()
+
+    if not rows:
+        return ""
+
+    # Detect header row: first row is all non-empty and no cell is purely numeric
+    def _looks_like_header(row: list[str]) -> bool:
+        return all(cell and not cell.strip().lstrip("-").replace(".", "").isdigit()
+                   for cell in row)
+
+    if header_row and len(rows) >= 2 and _looks_like_header(rows[0]):
+        headers = rows[0]
+        data_rows = rows[1:]
+        lines = []
+        for row in data_rows:
+            parts = []
+            for i, cell in enumerate(row):
+                label = headers[i] if i < len(headers) else f"col{i+1}"
+                parts.append(f"{label}: {cell}")
+            lines.append(" | ".join(parts))
+        return "\n".join(lines)
+    else:
+        return "\n".join(" | ".join(cell for cell in row) for row in rows)
 
 
 # 200 DPI is enough for scanned correspondence and cuts Paddle inference time
@@ -214,10 +297,19 @@ def _process_page(layout_engine, image_path: Path, page_number: int) -> dict:
     # Spatial sort: top to bottom by the block's y1 coordinate
     blocks.sort(key=lambda b: b["bbox"][1])
 
-    clean_text = "\n".join(
-        b["content"] for b in blocks
-        if b["category"] == "printed_text" and b["content"]
-    )
+    # Build clean_text in spatial order (blocks are already sorted top→bottom).
+    # TABLE blocks are serialised via _table_html_to_text so their cell content
+    # is searchable — previously they were silently dropped here, which is why
+    # table data never appeared in RAG/embedding results.
+    text_parts = []
+    for b in blocks:
+        if b["category"] == "printed_text" and b["content"]:
+            text_parts.append(b["content"])
+        elif b["category"] == "table" and b["content"]:
+            table_text = _table_html_to_text(b["content"])
+            if table_text:
+                text_parts.append(table_text)
+    clean_text = "\n".join(text_parts)
 
     # Metadata extraction (dates, reference numbers) on this page's text —
     # reuses the already-validated patterns from metadata_service.py rather
@@ -294,7 +386,20 @@ def _process_pdf_fitz(file_path: str) -> list[dict]:
 
             blocks.sort(key=lambda b: b["bbox"][1])
 
-            clean_text = "\n".join(page_text_lines)
+            # Build clean_text in spatial order, including tables.
+            # The fast PyMuPDF path previously only used page_text_lines (printed
+            # text outside tables).  Now we interleave table rows in reading order.
+            clean_parts: list[tuple[float, str]] = []  # (y1, text)
+            for b in blocks:
+                y1 = b["bbox"][1] if b["bbox"] else 0.0
+                if b["category"] == "printed_text" and b["content"]:
+                    clean_parts.append((y1, b["content"]))
+                elif b["category"] == "table" and b["content"]:
+                    table_text = _table_html_to_text(b["content"])
+                    if table_text:
+                        clean_parts.append((y1, table_text))
+            clean_parts.sort(key=lambda x: x[0])
+            clean_text = "\n".join(text for _, text in clean_parts)
             page_metadata = {
                 "dates": _extract_dates(clean_text),
                 "reference_numbers": _extract_ref_numbers(clean_text),
